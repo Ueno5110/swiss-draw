@@ -166,6 +166,28 @@ function applyResultAutoGame(result, gw1, gw2){
   return { gw1, gw2 };
 }
 
+function getPlayerStorageKey(){
+  const tid = playerPage.tournament?.id || params.get('tid') || '';
+  return `swissdraw:selectedPlayer:${tid}`;
+}
+
+function getStoredPlayerId(){
+  return params.get('player') || localStorage.getItem(getPlayerStorageKey()) || '';
+}
+
+function storeSelectedPlayer(playerId){
+  if(!playerId) return;
+  localStorage.setItem(getPlayerStorageKey(), playerId);
+}
+
+function getPlayerRoundUrl(roundNum, playerId=playerPage.selectedPlayerId){
+  const url = new URL(location.href);
+  url.searchParams.set('tid', playerPage.tournament.id);
+  url.searchParams.set('round', String(roundNum));
+  if(playerId) url.searchParams.set('player', playerId);
+  return url.toString();
+}
+
 function switchTab(t){
   ['setup','round','standing','timer'].forEach((name,i)=>{
     document.querySelectorAll('.tab')[i].classList.toggle('active', name===t);
@@ -317,6 +339,7 @@ async function loadTournament(){
         id: m.id, p1: m.p1_id, p2: m.p2_id || 'bye',
         result: m.result, gw1: m.gw1, gw2: m.gw2, submitted: m.submitted
       }));
+      sortMatchesForTables(rMatches, state.players);
       return { matches: rMatches, submitted: rMatches.every(m=>m.submitted) };
     });
 
@@ -387,9 +410,11 @@ async function nextRound(){
       submitted: matches[i].result==='bye'
     }));
 
+    sortMatchesForTables(localMatches, state.players);
     state.rounds.push({matches: localMatches, submitted:false});
     await db.from('tournaments').update({current_round: state.currentRound}).eq('id', state.tournamentId);
   } catch(e) {
+    sortMatchesForTables(matches, state.players);
     state.rounds.push({matches, submitted:false});
   }
 
@@ -400,6 +425,7 @@ function renderRound(){
   const el = document.getElementById('round-content');
   if(!state.started){ el.innerHTML='<div class="empty">大会を開始してください</div>'; return; }
   const round = state.rounds[state.currentRound-1];
+  sortMatchesForTables(round.matches, state.players);
   const isLast = state.currentRound >= state.totalRounds;
   const playerUrl = `${location.origin}${location.pathname}?tid=${state.tournamentId}&round=${state.currentRound}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(playerUrl)}`;
@@ -437,13 +463,15 @@ function renderRound(){
 }
 
 function renderMatch(m, i){
+  const tableNo = i + 1;
   if(m.p2==='bye'||m.result==='bye'){
     const p = getPlayer(m.p1);
-    return `<div class="bye-card">${escapeHtml(p?p.name:'?')} — 不戦勝（BYE）</div>`;
+    return `<div class="bye-card"><span class="table-no">第${tableNo}卓</span>${escapeHtml(p?p.name:'?')} — 不戦勝（BYE）</div>`;
   }
   const p1 = getPlayer(m.p1), p2 = getPlayer(m.p2);
   return `
     <div class="match-card">
+      <div class="table-no">第${tableNo}卓</div>
       <div class="match-players">
         <div class="match-player">${escapeHtml(p1?p1.name:'?')}</div>
         <div class="match-vs">VS</div>
@@ -565,6 +593,25 @@ async function submitRound(){
 
 function getPoints(p){ return p.wins*3 + p.draws; }
 function getPlayer(id){ return state.players.find(p=>p.id===id); }
+
+function sortMatchesForTables(matches, players){
+  const playerMap = new Map(players.map(p => [p.id, p]));
+  const p1Id = m => m.p1 || m.p1_id;
+  const p2Id = m => m.p2 || m.p2_id;
+  const score = id => {
+    const p = playerMap.get(id);
+    return p ? getPoints(p) : 0;
+  };
+  const name = id => playerMap.get(id)?.name || '';
+  return matches.sort((a,b)=>{
+    const ap = Math.max(score(p1Id(a)), score(p2Id(a)));
+    const bp = Math.max(score(p1Id(b)), score(p2Id(b)));
+    if(bp !== ap) return bp - ap;
+    const an = [name(p1Id(a)), name(p2Id(a))].sort().join('|');
+    const bn = [name(p1Id(b)), name(p2Id(b))].sort().join('|');
+    return an.localeCompare(bn, 'ja');
+  });
+}
 
 function calcOMW(p){
   if(p.opponents.length===0) return 1/3;
@@ -695,6 +742,12 @@ async function initPlayerPage(){
     playerPage.tournament = tournament;
     playerPage.players = players || [];
     playerPage.matches = matches || [];
+    sortMatchesForTables(playerPage.matches, playerPage.players);
+    const storedPlayerId = getStoredPlayerId();
+    if(playerPage.players.some(p => p.id === storedPlayerId)){
+      playerPage.selectedPlayerId = storedPlayerId;
+      storeSelectedPlayer(storedPlayerId);
+    }
     renderPlayerSelector();
     clearInterval(playerRoundPoll);
     playerRoundPoll = setInterval(refreshPlayerTournamentState, 15000);
@@ -738,7 +791,7 @@ function renderPlayerSelector(){
 function renderLatestRoundNotice(roundNum){
   const latestRound = Number(playerPage.tournament?.current_round || 0);
   if(!latestRound || latestRound <= roundNum) return '';
-  const url = `${location.origin}${location.pathname}?tid=${encodeURIComponent(playerPage.tournament.id)}&round=${latestRound}`;
+  const url = getPlayerRoundUrl(latestRound);
   return `
     <a class="next-round-link" href="${url}">
       最新ラウンドへ進む（R${latestRound}）
@@ -765,6 +818,8 @@ async function refreshPlayerTournamentState(){
 
 function selectPlayerForSubmit(playerId){
   playerPage.selectedPlayerId = playerId;
+  storeSelectedPlayer(playerId);
+  updateLatestRoundNotice();
   renderPlayerMatch();
 }
 
@@ -778,13 +833,17 @@ function renderPlayerMatch(){
   }
 
   const match = playerPage.matches.find(m => m.p1_id === playerId || m.p2_id === playerId);
+  const tableNo = playerPage.matches.findIndex(m => m.p1_id === playerId || m.p2_id === playerId) + 1;
   const player = playerPage.players.find(p => p.id === playerId);
   if(!match){
     area.innerHTML = '<div class="empty" style="padding:20px;">このラウンドの対戦が見つかりません</div>';
     return;
   }
   if(!match.p2_id || match.result === 'bye'){
-    area.innerHTML = `<div class="bye-card">${escapeHtml(player.name)} — 不戦勝（BYE）</div>`;
+    area.innerHTML = `
+      <div class="player-table-callout">あなたは第${tableNo}卓です</div>
+      <div class="bye-card">${escapeHtml(player.name)} — 不戦勝（BYE）</div>
+    `;
     return;
   }
 
@@ -796,6 +855,7 @@ function renderPlayerMatch(){
 
   area.innerHTML = `
     <div class="match-card player-submit-card">
+      <div class="player-table-callout">あなたは第${tableNo}卓です</div>
       <div class="match-players">
         <div class="match-player">${escapeHtml(p1?p1.name:'?')}</div>
         <div class="match-vs">VS</div>
