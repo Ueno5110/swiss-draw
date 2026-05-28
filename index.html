@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>スイスドロー大会管理</title>
+  <meta name="description" content="カードゲーム向けスイスドロー形式の大会管理ツール。無料・登録不要でブラウザから使えます。">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">SWISS<span>DRAW</span></div>
+    <div style="font-size:12px;color:var(--text2);" id="tournament-name-display"></div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('setup')">⚙️ 設定</button>
+    <button class="tab" onclick="switchTab('round')">⚔️ 対戦</button>
+    <button class="tab" onclick="switchTab('standing')">🏆 順位</button>
+    <button class="tab" onclick="switchTab('timer')">⏱️ タイマー</button>
+  </div>
+
+  <!-- 設定タブ -->
+  <div id="tab-setup" class="panel active">
+    <div class="card">
+      <div class="card-title">大会設定</div>
+      <div class="row">
+        <input type="text" id="inp-tournament-name" placeholder="大会名（例：第1回〇〇杯）" style="flex:2;">
+        <select id="inp-rounds" onchange="renderPlayers()">
+          <option value="auto">ラウンド数：自動</option>
+          <option value="3">3ラウンド</option>
+          <option value="4">4ラウンド</option>
+          <option value="5">5ラウンド</option>
+          <option value="6">6ラウンド</option>
+          <option value="7">7ラウンド</option>
+          <option value="8">8ラウンド</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">参加者登録</div>
+      <div class="row">
+        <input type="text" id="inp-player" placeholder="プレイヤー名を入力" onkeydown="if(event.key==='Enter')addPlayer()">
+        <button class="btn btn-primary" onclick="addPlayer()">追加</button>
+        <button class="btn btn-ghost" onclick="bulkAdd()">一括入力</button>
+      </div>
+      <div id="player-list" class="player-list"></div>
+      <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span id="player-count-info" style="font-size:13px;color:var(--text2);">0人登録済み</span>
+        <span id="rounds-preview" style="font-size:13px;color:var(--green);"></span>
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn btn-success" onclick="startTournament()" style="flex:1;">大会を開始する</button>
+      <button class="btn btn-ghost" onclick="resetAll()">リセット</button>
+    </div>
+  </div>
+
+  <!-- 対戦タブ -->
+  <div id="tab-round" class="panel">
+    <div id="round-content">
+      <div class="empty">大会を開始してください</div>
+    </div>
+  </div>
+
+  <!-- 順位表タブ -->
+  <div id="tab-standing" class="panel">
+    <div class="card">
+      <div class="card-title">順位表</div>
+      <div id="standing-content">
+        <div class="empty">大会を開始してください</div>
+      </div>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-ghost" onclick="exportCSV()">📥 CSVエクスポート</button>
+    </div>
+  </div>
+
+  <!-- タイマータブ -->
+  <div id="tab-timer" class="panel">
+    <div class="card" style="text-align:center;">
+      <div class="card-title">ラウンドタイマー</div>
+      <div class="row" style="justify-content:center;margin-bottom:12px;">
+        <select id="timer-preset" onchange="timerReset()">
+          <option value="50">50分</option>
+          <option value="40">40分</option>
+          <option value="30">30分</option>
+          <option value="25" selected>25分</option>
+          <option value="20">20分</option>
+        </select>
+        <input type="number" id="timer-custom" placeholder="カスタム(分)" min="1" max="180" style="width:130px;" onchange="timerReset()">
+      </div>
+      <div class="timer-display" id="timer-display"></div>
+      <div class="timer-controls">
+        <button class="btn btn-primary" onclick="timerStart()">▶ スタート</button>
+        <button class="btn btn-ghost" onclick="timerPause()">⏸ 一時停止</button>
+        <button class="btn btn-ghost" onclick="timerReset()">↺ リセット</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── 状態管理 ──
+let state = JSON.parse(localStorage.getItem('swissdraw2') || 'null') || {
+  name: '', players: [], rounds: [], currentRound: 0, totalRounds: 0, started: false
+};
+function save(){ localStorage.setItem('swissdraw2', JSON.stringify(state)); }
+
+// ── タブ切り替え ──
+function switchTab(t){
+  ['setup','round','standing','timer'].forEach((name,i)=>{
+    document.querySelectorAll('.tab')[i].classList.toggle('active', name===t);
+    document.getElementById('tab-'+name).classList.toggle('active', name===t);
+  });
+  if(t==='round') renderRound();
+  if(t==='standing') renderStanding();
+}
+
+// ── ラウンド数計算 ──
+function calcRounds(n){
+  if(n<=2)return 1; if(n<=4)return 2; if(n<=8)return 3;
+  if(n<=16)return 4; if(n<=32)return 5; if(n<=64)return 6;
+  if(n<=128)return 7; return 8;
+}
+
+// ── 参加者操作 ──
+function addPlayer(){
+  const inp = document.getElementById('inp-player');
+  const name = inp.value.trim();
+  if(!name) return;
+  if(state.started){ alert('大会開始後は参加者を追加できません'); return; }
+  if(state.players.find(p=>p.name===name)){ alert('同じ名前のプレイヤーが既にいます'); return; }
+  state.players.push({
+    id: Date.now()+Math.random(), name, dropped: false,
+    wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
+  });
+  inp.value = '';
+  save(); renderPlayers();
+}
+
+function bulkAdd(){
+  const names = prompt('プレイヤー名を半角スペース区切りで入力してください');
+  if(!names) return;
+  names.split(/\s+/).forEach(n=>{
+    const name = n.trim();
+    if(!name || state.players.find(p=>p.name===name)) return;
+    state.players.push({
+      id: Date.now()+Math.random(), name, dropped: false,
+      wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
+    });
+  });
+  save(); renderPlayers();
+}
+
+function toggleDrop(id){
+  const p = state.players.find(p=>p.id===id);
+  if(p){
+    p.dropped = !p.dropped;
+    save();
+    renderPlayers();
+    renderStanding();
+    renderRound();
+  }
+}
+
+function removePlayer(id){
+  if(state.started) return;
+  state.players = state.players.filter(p=>p.id!==id);
+  save(); renderPlayers();
+}
+
+function renderPlayers(){
+  const active = state.players.filter(p=>!p.dropped);
+  const ro = document.getElementById('inp-rounds').value;
+  const rounds = ro==='auto' ? calcRounds(active.length) : parseInt(ro);
+  document.getElementById('player-count-info').textContent = state.players.length + '人登録済み';
+  document.getElementById('rounds-preview').textContent = active.length>0 ? ro === 'auto' ? `→ ${rounds}ラウンド予定（自動）` :`→ ${rounds}ラウンド予定（手動）`: '';
+  document.getElementById('tournament-name-display').textContent = state.name || '';
+  const list = document.getElementById('player-list');
+  if(state.players.length===0){
+    list.innerHTML='<div class="empty" style="padding:16px;">プレイヤーを追加してください</div>';
+    return;
+  }
+  list.innerHTML = state.players.map(p=>`
+    <div class="player-item">
+      <span class="player-name">${p.name}</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="badge ${p.dropped?'badge-drop':'badge-active'}">${p.dropped?'DROP':'参加'}</span>
+        ${state.started
+          ? `<button class="btn btn-ghost btn-sm" onclick="toggleDrop(${p.id})">${p.dropped?'復帰':'DROP'}</button>`
+          : `<button class="btn btn-ghost btn-sm" onclick="removePlayer(${p.id})">削除</button>`
+        }
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── 大会開始 ──
+function startTournament(){
+  const active = state.players.filter(p=>!p.dropped);
+  if(active.length<2){ alert('参加者が2人以上必要です'); return; }
+  const name = document.getElementById('inp-tournament-name').value.trim();
+  const ro = document.getElementById('inp-rounds').value;
+  state.name = name || 'スイスドロー大会';
+  state.totalRounds = ro==='auto' ? calcRounds(active.length) : parseInt(ro);
+  state.started = true;
+  state.currentRound = 0;
+  state.rounds = [];
+  save();
+  nextRound();
+  switchTab('round');
+}
+
+// ── ペアリング生成 ──
+function nextRound(){
+  const active = state.players.filter(p=>!p.dropped);
+  const sorted = [...active].sort((a,b)=>{
+    const diff = getPoints(b)-getPoints(a);
+    return diff !== 0 ? diff : Math.random()-.5;
+  });
+  const used = new Set();
+  const matches = [];
+
+  for(let i=0; i<sorted.length; i++){
+    if(used.has(sorted[i].id)) continue;
+    let paired = false;
+    // 再戦を避けてペアリング
+    for(let j=i+1; j<sorted.length; j++){
+      if(used.has(sorted[j].id)) continue;
+      if(sorted[i].opponents.includes(sorted[j].id)) continue;
+      matches.push({p1:sorted[i].id, p2:sorted[j].id, result:null, gw1:0, gw2:0});
+      used.add(sorted[i].id); used.add(sorted[j].id);
+      paired = true; break;
+    }
+    // 再戦を許可して再試行
+    if(!paired && !used.has(sorted[i].id)){
+      for(let j=i+1; j<sorted.length; j++){
+        if(used.has(sorted[j].id)) continue;
+        matches.push({p1:sorted[i].id, p2:sorted[j].id, result:null, gw1:0, gw2:0});
+        used.add(sorted[i].id); used.add(sorted[j].id);
+        paired = true; break;
+      }
+    }
+    // BYE
+    if(!paired && !used.has(sorted[i].id)){
+      matches.push({p1:sorted[i].id, p2:'bye', result:'bye', gw1:2, gw2:0});
+      used.add(sorted[i].id);
+    }
+  }
+
+  state.rounds.push({matches, submitted:false});
+  state.currentRound++;
+  save(); renderRound();
+}
+
+// ── 対戦描画 ──
+function renderRound(){
+  const el = document.getElementById('round-content');
+  if(!state.started){ el.innerHTML='<div class="empty">大会を開始してください</div>'; return; }
+  const round = state.rounds[state.currentRound-1];
+  const isLast = state.currentRound >= state.totalRounds;
+
+  el.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat"><div class="stat-label">大会名</div><div class="stat-value" style="font-size:15px;">${state.name}</div></div>
+      <div class="stat"><div class="stat-label">現在</div><div class="stat-value">R${state.currentRound}</div></div>
+      <div class="stat"><div class="stat-label">全体</div><div class="stat-value">${state.totalRounds}R</div></div>
+      <div class="stat"><div class="stat-label">参加者</div><div class="stat-value">${state.players.filter(p=>!p.dropped).length}人</div></div>
+    </div>
+    <div class="round-header">
+      <div class="round-title">ラウンド ${state.currentRound} 対戦表</div>
+    </div>
+    <div id="matches-list">
+      ${round.matches.map((m,i)=>renderMatch(m,i)).join('')}
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-success" onclick="submitRound()">✅ 結果を確定する</button>
+      ${round.submitted && !isLast ? `<button class="btn btn-primary" onclick="nextRound()">次のラウンドへ →</button>` : ''}
+      ${round.submitted && isLast ? `<button class="btn btn-warn" onclick="switchTab('standing')">🏆 最終順位を見る</button>` : ''}
+    </div>
+  `;
+}
+
+function renderMatch(m, i){
+  if(m.result==='bye'){
+    const p = getPlayer(m.p1);
+    return `<div class="bye-card">🎯 ${p?p.name:'?'} — 不戦勝（BYE）</div>`;
+  }
+  const p1 = getPlayer(m.p1), p2 = getPlayer(m.p2);
+  return `
+    <div class="match-card">
+      <div class="match-players">
+        <div class="match-player">${p1?p1.name:'?'}</div>
+        <div class="match-vs">VS</div>
+        <div class="match-player">${p2?p2.name:'?'}</div>
+      </div>
+      <div class="match-result-row">
+        <select id="res-${i}" onchange="updateResult(${i})">
+          <option value="">-- 結果 --</option>
+          <option value="p1" ${m.result==='p1'?'selected':''}>◀ ${p1?p1.name:'?'} 勝利</option>
+          <option value="p2" ${m.result==='p2'?'selected':''}>▶ ${p2?p2.name:'?'} 勝利</option>
+          <option value="draw" ${m.result==='draw'?'selected':''}>引き分け</option>
+        </select>
+        <span class="game-label">ゲーム数</span>
+        <input type="number" id="gw1-${i}" value="${m.gw1||0}" min="0" max="2" onchange="updateGW(${i})">
+        <span style="color:var(--text2);">-</span>
+        <input type="number" id="gw2-${i}" value="${m.gw2||0}" min="0" max="2" onchange="updateGW(${i})">
+      </div>
+    </div>
+  `;
+}
+
+function updateResult(i){
+  const round = state.rounds[state.currentRound-1];
+  const match = round.matches[i];
+  const result = document.getElementById('res-'+i).value || null;
+
+  match.result = result;
+
+  if(result === 'p1'){
+    match.gw1 = 1;
+    match.gw2 = 0;
+  }else if(result === 'p2'){
+    match.gw1 = 0;
+    match.gw2 = 1;
+  }else if(result === 'draw'){
+    match.gw1 = 0;
+    match.gw2 = 0;
+  }
+
+  const gw1 = document.getElementById('gw1-'+i);
+  const gw2 = document.getElementById('gw2-'+i);
+  if(gw1)gw1.value = match.gw1;
+  if(gw2)gw2.value = match.gw2;
+  save();
+}
+
+function updateGW(i){
+  const round = state.rounds[state.currentRound-1];
+  round.matches[i].gw1 = parseInt(document.getElementById('gw1-'+i).value)||0;
+  round.matches[i].gw2 = parseInt(document.getElementById('gw2-'+i).value)||0;
+  save();
+}
+
+function submitRound(){
+  const round = state.rounds[state.currentRound-1];
+
+    if(round.submitted){
+    alert('このラウンドはすでに確定済みです');
+    return;
+  }
+
+  const unfinished = round.matches.filter(m=>!m.result||m.result==='');
+  if(unfinished.length>0){
+    if(!confirm(`${unfinished.length}試合の結果が未入力です。このまま確定しますか？`)) return;
+  }
+  round.matches.forEach(m=>{
+    if(m.result==='bye'){
+      const p = getPlayer(m.p1);
+      if(p){ p.wins++; p.gameWins+=2; }
+      return;
+    }
+    const p1=getPlayer(m.p1), p2=getPlayer(m.p2);
+    if(!p1||!p2) return;
+    p1.opponents.push(m.p2); p2.opponents.push(m.p1);
+    p1.gameWins+=m.gw1; p1.gameLosses+=m.gw2;
+    p2.gameWins+=m.gw2; p2.gameLosses+=m.gw1;
+    if(m.result==='p1'){ p1.wins++; p2.losses++; }
+    else if(m.result==='p2'){ p2.wins++; p1.losses++; }
+    else if(m.result==='draw'){ p1.draws++; p2.draws++; }
+  });
+  round.submitted = true;
+  save(); renderRound(); renderStanding();
+}
+
+// ── 順位計算 ──
+function getPoints(p){ return p.wins*3 + p.draws; }
+function getPlayer(id){ return state.players.find(p=>p.id===id); }
+
+function calcOMW(p){
+  if(p.opponents.length===0) return 1/3;
+  const rates = p.opponents.map(oid=>{
+    const op = getPlayer(oid);
+    if(!op) return 1/3;
+    const total = op.wins+op.losses+op.draws;
+    return total===0 ? 1/3 : Math.max((op.wins + op.draws * 0.5)/total, 1/3);
+  });
+  return rates.reduce((s,r)=>s+r,0)/rates.length;
+}
+
+function calcGW(p){
+  const total = p.gameWins+p.gameLosses;
+  return total===0 ? 1/3 : Math.max(p.gameWins/total, 1/3);
+}
+
+function calcOGW(p){
+  if(p.opponents.length===0) return 1/3;
+  const rates = p.opponents.map(oid=>{ const op=getPlayer(oid); return op?calcGW(op):1/3; });
+  return rates.reduce((s,r)=>s+r,0)/rates.length;
+}
+
+function getSortedPlayers(includeDropped = false){
+  const players = includeDropped ? [...state.players] : state.players.filter(p=>!p.dropped);
+
+  return players.sort((a,b)=>{
+    const pd = getPoints(b)-getPoints(a);
+    if(pd!==0) return pd;
+    const omw = calcOMW(b)-calcOMW(a);
+    if(Math.abs(omw)>0.0001) return omw;
+    const gw = calcGW(b)-calcGW(a);
+    if(Math.abs(gw)>0.0001) return gw;
+    return calcOGW(b)-calcOGW(a);
+  });
+}
+
+function renderStanding(){
+  const el = document.getElementById('standing-content');
+  if(!state.started){ el.innerHTML='<div class="empty">大会を開始してください</div>'; return; }
+  const activePlayers = getSortedPlayers(false);
+  const droppedPlayers = getSortedPlayers(true).filter(p => p.dropped);
+  el.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>順位</th><th>名前</th><th>勝点</th><th>W-L-D</th>
+          <th>OMW%
+            <span class="tooltip">
+                <button type="button" class="tooltip-btn" aria-label="OMW%の説明">?</button>
+                <span class="tooltip-text">対戦相手のマッチ勝率の平均です。同じ勝点の順位決定に使われます。</span>
+            </span>
+          </th>
+          <th>GW%
+            <span class="tooltip">
+                <button type="button" class="tooltip-btn" aria-label="GW%の説明">?</button>
+                <span class="tooltip-text">ゲーム勝率です。同じ勝点および同じOMW%の順位決定に使われます。</span>
+            </span>
+          </th>
+          <th>OGW%
+            <span class="tooltip">
+                <button type="button" class="tooltip-btn" aria-label="OGW%の説明">?</button>
+                <span class="tooltip-text">対戦相手のゲーム勝率の平均です（BO3用)。同じ勝点、同じOMW%、同じGW% の順位決定に使われます。</span>
+            </span>
+            </th>
+            <th>状態</th>
+        </tr>
+      </thead>
+        <tbody>
+        ${activePlayers.map((p,i)=>`
+            <tr class="${i===0?'rank-gold':i===1?'rank-silver':i===2?'rank-bronze':''}">
+            <td>${i+1}</td>
+            <td>${p.name}</td>
+            <td>${getPoints(p)}</td>
+            <td>${p.wins}-${p.losses}-${p.draws}</td>
+            <td>${(calcOMW(p)*100).toFixed(1)}%</td>
+            <td>${(calcGW(p)*100).toFixed(1)}%</td>
+            <td>${(calcOGW(p)*100).toFixed(1)}%</td>
+            <td>
+                <span class="badge badge-active">参加</span>
+                ${state.started ? `<button class="btn btn-ghost btn-sm" onclick="toggleDrop(${p.id})">DROP</button>` : ''}
+            </td>
+            </tr>
+        `).join('')}
+
+        ${droppedPlayers.length > 0 ? `
+            <tr class="drop-section-row">
+            <td colspan="8">DROP済み</td>
+            </tr>
+        ` : ''}
+
+        ${droppedPlayers.map(p=>`
+            <tr class="dropped-row">
+            <td>-</td>
+            <td>${p.name}</td>
+            <td>${getPoints(p)}</td>
+            <td>${p.wins}-${p.losses}-${p.draws}</td>
+            <td>${(calcOMW(p)*100).toFixed(1)}%</td>
+            <td>${(calcGW(p)*100).toFixed(1)}%</td>
+            <td>${(calcOGW(p)*100).toFixed(1)}%</td>
+            <td>
+                <span class="badge badge-drop">DROP</span>
+                ${state.started ? `<button class="btn btn-ghost btn-sm" onclick="toggleDrop(${p.id})">復帰</button>` : ''}
+            </td>
+            </tr>
+        `).join('')}
+        </tbody>
+    </table>
+  `;
+}
+
+// ── CSVエクスポート ──
+function exportCSV(){
+  const players = getSortedPlayers(true);
+  const headers = ['順位','名前','勝点','勝','負','分','OMW%','GW%','OGW%','状態'];
+  const rows = players.map((p,i)=>[
+    i+1, p.name, getPoints(p), p.wins, p.losses, p.draws,
+    (calcOMW(p)*100).toFixed(1), (calcGW(p)*100).toFixed(1), (calcOGW(p)*100).toFixed(1),
+    p.dropped?'DROP':'参加'
+  ]);
+  const csv = [headers,...rows].map(r=>r.map(c=>`"${c}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${state.name||'swissdraw'}_standings.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// ── リセット ──
+function resetAll(){
+  if(!confirm('大会データをすべてリセットしますか？')) return;
+  state = {name:'',players:[],rounds:[],currentRound:0,totalRounds:0,started:false};
+  save(); renderPlayers(); renderRound(); renderStanding();
+  document.getElementById('inp-tournament-name').value='';
+}
+
+// ── タイマー ──
+let timerSec = 25*60;
+let timerRunning = false;
+let timerInterval = null;
+
+function timerStart(){
+  if(timerRunning) return;
+  timerRunning = true;
+  timerInterval = setInterval(()=>{
+    timerSec--;
+    updateTimerDisplay();
+    if(timerSec<=0){ clearInterval(timerInterval); timerRunning=false; }
+  },1000);
+}
+
+function timerPause(){
+  clearInterval(timerInterval);
+  timerRunning = false;
+}
+
+function timerReset(){
+  clearInterval(timerInterval);
+  timerRunning = false;
+  const custom = parseInt(document.getElementById('timer-custom').value);
+  const preset = parseInt(document.getElementById('timer-preset').value);
+  timerSec = (custom>0?custom:preset)*60;
+  updateTimerDisplay();
+}
+
+function updateTimerDisplay(){
+  const m = Math.floor(timerSec/60);
+  const s = timerSec%60;
+  const el = document.getElementById('timer-display');
+  el.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  el.className = 'timer-display' + (timerSec<=60?' danger':timerSec<=300?' warn':'');
+}
+
+// ── 初期化 ──
+renderPlayers();
+updateTimerDisplay();
+if(state.started){
+  document.getElementById('tournament-name-display').textContent = state.name;
+}
+</script>
+</body>
+</html>
