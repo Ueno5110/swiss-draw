@@ -5,13 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>スイスドロー大会管理</title>
   <meta name="description" content="カードゲーム向けスイスドロー形式の大会管理ツール。無料・登録不要でブラウザから使えます。">
-    <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="app">
   <header>
     <div class="logo">SWISS<span>DRAW</span></div>
-    <div style="font-size:12px;color:var(--text2);" id="tournament-name-display"></div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="conn-status" class="conn-status conn-err">接続中...</span>
+      <span id="tournament-name-display" style="font-size:12px;color:var(--text2);"></span>
+    </div>
   </header>
 
   <div class="tabs">
@@ -27,7 +31,7 @@
       <div class="card-title">大会設定</div>
       <div class="row">
         <input type="text" id="inp-tournament-name" placeholder="大会名（例：第1回〇〇杯）" style="flex:2;">
-        <select id="inp-rounds" onchange="renderPlayers()">
+        <select id="inp-rounds">
           <option value="auto">ラウンド数：自動</option>
           <option value="3">3ラウンド</option>
           <option value="4">4ラウンド</option>
@@ -57,22 +61,28 @@
       <button class="btn btn-success" onclick="startTournament()" style="flex:1;">大会を開始する</button>
       <button class="btn btn-ghost" onclick="resetAll()">リセット</button>
     </div>
+
+    <!-- 既存大会を読み込む -->
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">既存の大会を読み込む</div>
+      <div class="row">
+        <input type="text" id="inp-load-id" placeholder="大会IDを入力">
+        <button class="btn btn-ghost" onclick="loadTournament()">読み込む</button>
+      </div>
+      <div id="load-status" style="font-size:12px;color:var(--text2);margin-top:6px;"></div>
+    </div>
   </div>
 
   <!-- 対戦タブ -->
   <div id="tab-round" class="panel">
-    <div id="round-content">
-      <div class="empty">大会を開始してください</div>
-    </div>
+    <div id="round-content"><div class="empty">大会を開始してください</div></div>
   </div>
 
   <!-- 順位表タブ -->
   <div id="tab-standing" class="panel">
     <div class="card">
       <div class="card-title">順位表</div>
-      <div id="standing-content">
-        <div class="empty">大会を開始してください</div>
-      </div>
+      <div id="standing-content"><div class="empty">大会を開始してください</div></div>
     </div>
     <div class="btn-group">
       <button class="btn btn-ghost" onclick="exportCSV()">📥 CSVエクスポート</button>
@@ -88,12 +98,12 @@
           <option value="50">50分</option>
           <option value="40">40分</option>
           <option value="30">30分</option>
-          <option value="25" selected>25分</option>
+          <option value="25">25分</option>
           <option value="20">20分</option>
         </select>
         <input type="number" id="timer-custom" placeholder="カスタム(分)" min="1" max="180" style="width:130px;" onchange="timerReset()">
       </div>
-      <div class="timer-display" id="timer-display"></div>
+      <div class="timer-display" id="timer-display">50:00</div>
       <div class="timer-controls">
         <button class="btn btn-primary" onclick="timerStart()">▶ スタート</button>
         <button class="btn btn-ghost" onclick="timerPause()">⏸ 一時停止</button>
@@ -104,11 +114,30 @@
 </div>
 
 <script>
+// ── Supabase初期化 ──
+const SUPABASE_URL = 'https://xizsnqlhbswnhvgkwsqt.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_K8PqzA8680tC5GECdpDC5w_RbQueZDd';
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// 接続確認
+async function checkConnection(){
+  try {
+    const { error } = await db.from('tournaments').select('id').limit(1);
+    const el = document.getElementById('conn-status');
+    if(error){ el.textContent='接続エラー'; el.className='conn-status conn-err'; }
+    else{ el.textContent='接続OK'; el.className='conn-status conn-ok'; }
+  } catch(e) {
+    document.getElementById('conn-status').textContent='接続エラー';
+  }
+}
+checkConnection();
+
 // ── 状態管理 ──
-let state = JSON.parse(localStorage.getItem('swissdraw2') || 'null') || {
-  name: '', players: [], rounds: [], currentRound: 0, totalRounds: 0, started: false
+let state = {
+  tournamentId: null, name: '', players: [], rounds: [],
+  currentRound: 0, totalRounds: 0, started: false
 };
-function save(){ localStorage.setItem('swissdraw2', JSON.stringify(state)); }
 
 // ── タブ切り替え ──
 function switchTab(t){
@@ -134,43 +163,38 @@ function addPlayer(){
   if(!name) return;
   if(state.started){ alert('大会開始後は参加者を追加できません'); return; }
   if(state.players.find(p=>p.name===name)){ alert('同じ名前のプレイヤーが既にいます'); return; }
+  const id = 'local_' + Date.now() + Math.random();
   state.players.push({
-    id: Date.now()+Math.random(), name, dropped: false,
+    id, name, dropped: false,
     wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
   });
   inp.value = '';
-  save(); renderPlayers();
+  renderPlayers();
 }
 
 function bulkAdd(){
-  const names = prompt('プレイヤー名を半角スペース区切りで入力してください');
+  const names = prompt('プレイヤー名を改行区切りで入力してください');
   if(!names) return;
-  names.split(/\s+/).forEach(n=>{
+  names.split('\n').forEach(n=>{
     const name = n.trim();
     if(!name || state.players.find(p=>p.name===name)) return;
     state.players.push({
-      id: Date.now()+Math.random(), name, dropped: false,
+      id: 'local_'+Date.now()+Math.random(), name, dropped: false,
       wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
     });
   });
-  save(); renderPlayers();
+  renderPlayers();
 }
 
 function toggleDrop(id){
   const p = state.players.find(p=>p.id===id);
-  if(p){
-    p.dropped = !p.dropped;
-    save();
-    renderPlayers();
-    renderStanding();
-    renderRound();
-  }
+  if(p){ p.dropped = !p.dropped; renderPlayers(); }
 }
 
 function removePlayer(id){
   if(state.started) return;
   state.players = state.players.filter(p=>p.id!==id);
-  save(); renderPlayers();
+  renderPlayers();
 }
 
 function renderPlayers(){
@@ -178,8 +202,7 @@ function renderPlayers(){
   const ro = document.getElementById('inp-rounds').value;
   const rounds = ro==='auto' ? calcRounds(active.length) : parseInt(ro);
   document.getElementById('player-count-info').textContent = state.players.length + '人登録済み';
-  document.getElementById('rounds-preview').textContent = active.length>0 ? ro === 'auto' ? `→ ${rounds}ラウンド予定（自動）` :`→ ${rounds}ラウンド予定（手動）`: '';
-  document.getElementById('tournament-name-display').textContent = state.name || '';
+  document.getElementById('rounds-preview').textContent = active.length>0 ? `→ ${rounds}ラウンド予定` : '';
   const list = document.getElementById('player-list');
   if(state.players.length===0){
     list.innerHTML='<div class="empty" style="padding:16px;">プレイヤーを追加してください</div>';
@@ -187,36 +210,116 @@ function renderPlayers(){
   }
   list.innerHTML = state.players.map(p=>`
     <div class="player-item">
-      <span class="player-name">${p.name}</span>
+      <span style="font-weight:500">${p.name}</span>
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="badge ${p.dropped?'badge-drop':'badge-active'}">${p.dropped?'DROP':'参加'}</span>
         ${state.started
-          ? `<button class="btn btn-ghost btn-sm" onclick="toggleDrop(${p.id})">${p.dropped?'復帰':'DROP'}</button>`
-          : `<button class="btn btn-ghost btn-sm" onclick="removePlayer(${p.id})">削除</button>`
+          ? `<button class="btn btn-ghost btn-sm" onclick="toggleDrop('${p.id}')">${p.dropped?'復帰':'DROP'}</button>`
+          : `<button class="btn btn-ghost btn-sm" onclick="removePlayer('${p.id}')">削除</button>`
         }
       </div>
     </div>
   `).join('');
 }
 
-// ── 大会開始 ──
-function startTournament(){
+// ── 大会開始（Supabaseに保存） ──
+async function startTournament(){
   const active = state.players.filter(p=>!p.dropped);
   if(active.length<2){ alert('参加者が2人以上必要です'); return; }
-  const name = document.getElementById('inp-tournament-name').value.trim();
+  const name = document.getElementById('inp-tournament-name').value.trim() || 'スイスドロー大会';
   const ro = document.getElementById('inp-rounds').value;
-  state.name = name || 'スイスドロー大会';
-  state.totalRounds = ro==='auto' ? calcRounds(active.length) : parseInt(ro);
-  state.started = true;
-  state.currentRound = 0;
-  state.rounds = [];
-  save();
-  nextRound();
-  switchTab('round');
+  const totalRounds = ro==='auto' ? calcRounds(active.length) : parseInt(ro);
+
+  try {
+    // 大会をDBに保存
+    const { data: t, error: te } = await db.from('tournaments').insert({
+      name, total_rounds: totalRounds, current_round: 0, started: true
+    }).select().single();
+    if(te) throw te;
+
+    state.tournamentId = t.id;
+    state.name = name;
+    state.totalRounds = totalRounds;
+    state.started = true;
+    state.currentRound = 0;
+    state.rounds = [];
+
+    // プレイヤーをDBに保存
+    const playerRows = state.players.map(p=>({
+      tournament_id: t.id, name: p.name, dropped: p.dropped
+    }));
+    const { data: savedPlayers, error: pe } = await db.from('players').insert(playerRows).select();
+    if(pe) throw pe;
+
+    // ローカルのプレイヤーIDをDBのIDに更新
+    state.players = savedPlayers.map(sp=>({
+      id: sp.id, name: sp.name, dropped: sp.dropped,
+      wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
+    }));
+
+    document.getElementById('tournament-name-display').textContent = name;
+    alert(`大会ID: ${t.id}\n\nこのIDを参加者に共有してください。`);
+
+    await nextRound();
+    switchTab('round');
+  } catch(e) {
+    alert('大会の開始に失敗しました: ' + e.message);
+  }
+}
+
+// ── 既存大会を読み込む ──
+async function loadTournament(){
+  const id = document.getElementById('inp-load-id').value.trim();
+  if(!id){ alert('大会IDを入力してください'); return; }
+  const status = document.getElementById('load-status');
+  status.textContent = '読み込み中...';
+  try {
+    // 大会情報
+    const { data: t, error: te } = await db.from('tournaments').select('*').eq('id', id).single();
+    if(te) throw te;
+
+    // プレイヤー情報
+    const { data: players, error: pe } = await db.from('players').select('*').eq('tournament_id', id);
+    if(pe) throw pe;
+
+    // 対戦情報
+    const { data: matches, error: me } = await db.from('matches').select('*').eq('tournament_id', id).order('round_num');
+    if(me) throw me;
+
+    // stateを再構築
+    state.tournamentId = t.id;
+    state.name = t.name;
+    state.totalRounds = t.total_rounds;
+    state.currentRound = t.current_round;
+    state.started = t.started;
+    state.players = players.map(p=>({
+      id: p.id, name: p.name, dropped: p.dropped,
+      wins: p.wins, losses: p.losses, draws: p.draws,
+      gameWins: p.game_wins, gameLosses: p.game_losses,
+      opponents: p.opponents || []
+    }));
+
+    // ラウンドデータを再構築
+    const roundNums = [...new Set(matches.map(m=>m.round_num))].sort();
+    state.rounds = roundNums.map(rn=>{
+      const rMatches = matches.filter(m=>m.round_num===rn).map(m=>({
+        id: m.id, p1: m.p1_id, p2: m.p2_id,
+        result: m.result, gw1: m.gw1, gw2: m.gw2, submitted: m.submitted
+      }));
+      return { matches: rMatches, submitted: rMatches.every(m=>m.submitted) };
+    });
+
+    document.getElementById('tournament-name-display').textContent = t.name;
+    renderPlayers();
+    status.textContent = `✅ 「${t.name}」を読み込みました`;
+    switchTab('round');
+  } catch(e) {
+    status.textContent = '❌ 読み込みに失敗しました: ' + e.message;
+  }
 }
 
 // ── ペアリング生成 ──
-function nextRound(){
+async function nextRound(){
   const active = state.players.filter(p=>!p.dropped);
   const sorted = [...active].sort((a,b)=>{
     const diff = getPoints(b)-getPoints(a);
@@ -228,7 +331,6 @@ function nextRound(){
   for(let i=0; i<sorted.length; i++){
     if(used.has(sorted[i].id)) continue;
     let paired = false;
-    // 再戦を避けてペアリング
     for(let j=i+1; j<sorted.length; j++){
       if(used.has(sorted[j].id)) continue;
       if(sorted[i].opponents.includes(sorted[j].id)) continue;
@@ -236,7 +338,6 @@ function nextRound(){
       used.add(sorted[i].id); used.add(sorted[j].id);
       paired = true; break;
     }
-    // 再戦を許可して再試行
     if(!paired && !used.has(sorted[i].id)){
       for(let j=i+1; j<sorted.length; j++){
         if(used.has(sorted[j].id)) continue;
@@ -245,16 +346,50 @@ function nextRound(){
         paired = true; break;
       }
     }
-    // BYE
     if(!paired && !used.has(sorted[i].id)){
       matches.push({p1:sorted[i].id, p2:'bye', result:'bye', gw1:2, gw2:0});
       used.add(sorted[i].id);
     }
   }
 
-  state.rounds.push({matches, submitted:false});
   state.currentRound++;
-  save(); renderRound();
+
+  // DBに保存
+  try {
+    const matchRows = matches.map(m=>({
+      tournament_id: state.tournamentId,
+      round_num: state.currentRound,
+      p1_id: m.p1,
+      p2_id: m.p2==='bye' ? null : m.p2,
+      result: m.result,
+      gw1: m.gw1, gw2: m.gw2,
+      submitted: m.result==='bye'
+    }));
+    const { data: savedMatches, error } = await db.from('matches').insert(matchRows).select();
+    if(error) throw error;
+
+    // ラウンドデータにDBのIDを付与
+    const localMatches = savedMatches.map((sm,i)=>({
+      id: sm.id,
+      p1: matches[i].p1,
+      p2: matches[i].p2,
+      result: matches[i].result,
+      gw1: matches[i].gw1,
+      gw2: matches[i].gw2,
+      submitted: matches[i].result==='bye'
+    }));
+
+    state.rounds.push({matches: localMatches, submitted:false});
+
+    // current_roundを更新
+    await db.from('tournaments').update({current_round: state.currentRound}).eq('id', state.tournamentId);
+
+  } catch(e) {
+    // DBエラー時はローカルのみで動作
+    state.rounds.push({matches, submitted:false});
+  }
+
+  renderRound();
 }
 
 // ── 対戦描画 ──
@@ -264,15 +399,30 @@ function renderRound(){
   const round = state.rounds[state.currentRound-1];
   const isLast = state.currentRound >= state.totalRounds;
 
+  // QRコードURL（参加者用）
+  const playerUrl = `${location.origin}${location.pathname}?tid=${state.tournamentId}&round=${state.currentRound}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(playerUrl)}`;
+
   el.innerHTML = `
     <div class="stat-grid">
-      <div class="stat"><div class="stat-label">大会名</div><div class="stat-value" style="font-size:15px;">${state.name}</div></div>
+      <div class="stat"><div class="stat-label">大会名</div><div class="stat-value" style="font-size:14px;">${state.name}</div></div>
       <div class="stat"><div class="stat-label">現在</div><div class="stat-value">R${state.currentRound}</div></div>
       <div class="stat"><div class="stat-label">全体</div><div class="stat-value">${state.totalRounds}R</div></div>
       <div class="stat"><div class="stat-label">参加者</div><div class="stat-value">${state.players.filter(p=>!p.dropped).length}人</div></div>
     </div>
+
+    <div class="card">
+      <div class="card-title">参加者用QRコード</div>
+      <div class="qr-wrap">
+        <img src="${qrUrl}" alt="QRコード">
+        <div class="qr-url">${playerUrl}</div>
+        <p style="font-size:12px;color:var(--text2);margin-top:8px;">参加者はこのQRを読み取って結果を送信できます</p>
+      </div>
+    </div>
+
     <div class="round-header">
       <div class="round-title">ラウンド ${state.currentRound} 対戦表</div>
+      <button class="btn btn-ghost btn-sm" onclick="refreshResults()">🔄 結果を更新</button>
     </div>
     <div id="matches-list">
       ${round.matches.map((m,i)=>renderMatch(m,i)).join('')}
@@ -286,7 +436,7 @@ function renderRound(){
 }
 
 function renderMatch(m, i){
-  if(m.result==='bye'){
+  if(m.p2==='bye'||m.result==='bye'){
     const p = getPlayer(m.p1);
     return `<div class="bye-card">🎯 ${p?p.name:'?'} — 不戦勝（BYE）</div>`;
   }
@@ -299,67 +449,79 @@ function renderMatch(m, i){
         <div class="match-player">${p2?p2.name:'?'}</div>
       </div>
       <div class="match-result-row">
-        <select id="res-${i}" onchange="updateResult(${i})">
+        <select id="res-${i}" onchange="updateResult(${i}, '${m.id}')">
           <option value="">-- 結果 --</option>
           <option value="p1" ${m.result==='p1'?'selected':''}>◀ ${p1?p1.name:'?'} 勝利</option>
           <option value="p2" ${m.result==='p2'?'selected':''}>▶ ${p2?p2.name:'?'} 勝利</option>
           <option value="draw" ${m.result==='draw'?'selected':''}>引き分け</option>
         </select>
-        <span class="game-label">ゲーム数</span>
-        <input type="number" id="gw1-${i}" value="${m.gw1||0}" min="0" max="2" onchange="updateGW(${i})">
+        <span style="font-size:12px;color:var(--text2);">ゲーム数</span>
+        <input type="number" id="gw1-${i}" value="${m.gw1||0}" min="0" max="2" style="width:52px;" onchange="updateGW(${i}, '${m.id}')">
         <span style="color:var(--text2);">-</span>
-        <input type="number" id="gw2-${i}" value="${m.gw2||0}" min="0" max="2" onchange="updateGW(${i})">
+        <input type="number" id="gw2-${i}" value="${m.gw2||0}" min="0" max="2" style="width:52px;" onchange="updateGW(${i}, '${m.id}')">
       </div>
+      ${m.submitted ? '<div class="match-submitted">✅ 送信済み</div>' : ''}
     </div>
   `;
 }
 
-function updateResult(i){
+// ── 結果更新（DBに保存） ──
+async function updateResult(i, matchId){
   const round = state.rounds[state.currentRound-1];
-  const match = round.matches[i];
   const result = document.getElementById('res-'+i).value || null;
-
-  match.result = result;
-
-  if(result === 'p1'){
-    match.gw1 = 1;
-    match.gw2 = 0;
-  }else if(result === 'p2'){
-    match.gw1 = 0;
-    match.gw2 = 1;
-  }else if(result === 'draw'){
-    match.gw1 = 0;
-    match.gw2 = 0;
+  round.matches[i].result = result;
+  if(matchId && !matchId.startsWith('undefined')){
+    await db.from('matches').update({result}).eq('id', matchId);
   }
-
-  const gw1 = document.getElementById('gw1-'+i);
-  const gw2 = document.getElementById('gw2-'+i);
-  if(gw1)gw1.value = match.gw1;
-  if(gw2)gw2.value = match.gw2;
-  save();
 }
 
-function updateGW(i){
+async function updateGW(i, matchId){
   const round = state.rounds[state.currentRound-1];
-  round.matches[i].gw1 = parseInt(document.getElementById('gw1-'+i).value)||0;
-  round.matches[i].gw2 = parseInt(document.getElementById('gw2-'+i).value)||0;
-  save();
+  const gw1 = parseInt(document.getElementById('gw1-'+i).value)||0;
+  const gw2 = parseInt(document.getElementById('gw2-'+i).value)||0;
+  round.matches[i].gw1 = gw1;
+  round.matches[i].gw2 = gw2;
+  if(matchId && !matchId.startsWith('undefined')){
+    await db.from('matches').update({gw1, gw2}).eq('id', matchId);
+  }
 }
 
-function submitRound(){
-  const round = state.rounds[state.currentRound-1];
+// ── 参加者からの結果を取得 ──
+async function refreshResults(){
+  if(!state.tournamentId) return;
+  try {
+    const { data: matches, error } = await db.from('matches')
+      .select('*')
+      .eq('tournament_id', state.tournamentId)
+      .eq('round_num', state.currentRound);
+    if(error) throw error;
 
-    if(round.submitted){
-    alert('このラウンドはすでに確定済みです');
-    return;
+    const round = state.rounds[state.currentRound-1];
+    matches.forEach(m=>{
+      const local = round.matches.find(lm=>lm.id===m.id);
+      if(local){
+        local.result = m.result;
+        local.gw1 = m.gw1;
+        local.gw2 = m.gw2;
+        local.submitted = m.submitted;
+      }
+    });
+    renderRound();
+  } catch(e) {
+    console.error('結果の取得に失敗:', e);
   }
+}
 
-  const unfinished = round.matches.filter(m=>!m.result||m.result==='');
+// ── ラウンド確定 ──
+async function submitRound(){
+  const round = state.rounds[state.currentRound-1];
+  const unfinished = round.matches.filter(m=>(!m.result||m.result==='')&&m.p2!=='bye');
   if(unfinished.length>0){
     if(!confirm(`${unfinished.length}試合の結果が未入力です。このまま確定しますか？`)) return;
   }
+
   round.matches.forEach(m=>{
-    if(m.result==='bye'){
+    if(m.p2==='bye'||m.result==='bye'){
       const p = getPlayer(m.p1);
       if(p){ p.wins++; p.gameWins+=2; }
       return;
@@ -373,8 +535,27 @@ function submitRound(){
     else if(m.result==='p2'){ p2.wins++; p1.losses++; }
     else if(m.result==='draw'){ p1.draws++; p2.draws++; }
   });
+
   round.submitted = true;
-  save(); renderRound(); renderStanding();
+
+  // DBのプレイヤー情報を更新
+  try {
+    for(const p of state.players){
+      await db.from('players').update({
+        wins: p.wins, losses: p.losses, draws: p.draws,
+        game_wins: p.gameWins, game_losses: p.gameLosses,
+        opponents: p.opponents, dropped: p.dropped
+      }).eq('id', p.id);
+    }
+    // 対戦をsubmitted=trueに
+    for(const m of round.matches){
+      if(m.id) await db.from('matches').update({submitted:true}).eq('id', m.id);
+    }
+  } catch(e) {
+    console.error('DB更新エラー:', e);
+  }
+
+  renderRound(); renderStanding();
 }
 
 // ── 順位計算 ──
@@ -387,26 +568,21 @@ function calcOMW(p){
     const op = getPlayer(oid);
     if(!op) return 1/3;
     const total = op.wins+op.losses+op.draws;
-    return total===0 ? 1/3 : Math.max((op.wins + op.draws * 0.5)/total, 1/3);
+    return total===0 ? 1/3 : Math.max(op.wins/total, 1/3);
   });
   return rates.reduce((s,r)=>s+r,0)/rates.length;
 }
-
 function calcGW(p){
   const total = p.gameWins+p.gameLosses;
   return total===0 ? 1/3 : Math.max(p.gameWins/total, 1/3);
 }
-
 function calcOGW(p){
   if(p.opponents.length===0) return 1/3;
   const rates = p.opponents.map(oid=>{ const op=getPlayer(oid); return op?calcGW(op):1/3; });
   return rates.reduce((s,r)=>s+r,0)/rates.length;
 }
-
-function getSortedPlayers(includeDropped = false){
-  const players = includeDropped ? [...state.players] : state.players.filter(p=>!p.dropped);
-
-  return players.sort((a,b)=>{
+function getSortedPlayers(){
+  return [...state.players].sort((a,b)=>{
     const pd = getPoints(b)-getPoints(a);
     if(pd!==0) return pd;
     const omw = calcOMW(b)-calcOMW(a);
@@ -420,80 +596,31 @@ function getSortedPlayers(includeDropped = false){
 function renderStanding(){
   const el = document.getElementById('standing-content');
   if(!state.started){ el.innerHTML='<div class="empty">大会を開始してください</div>'; return; }
-  const activePlayers = getSortedPlayers(false);
-  const droppedPlayers = getSortedPlayers(true).filter(p => p.dropped);
+  const players = getSortedPlayers();
   el.innerHTML = `
     <table>
       <thead>
-        <tr>
-          <th>順位</th><th>名前</th><th>勝点</th><th>W-L-D</th>
-          <th>OMW%
-            <span class="tooltip">
-                <button type="button" class="tooltip-btn" aria-label="OMW%の説明">?</button>
-                <span class="tooltip-text">対戦相手のマッチ勝率の平均です。同じ勝点の順位決定に使われます。</span>
-            </span>
-          </th>
-          <th>GW%
-            <span class="tooltip">
-                <button type="button" class="tooltip-btn" aria-label="GW%の説明">?</button>
-                <span class="tooltip-text">ゲーム勝率です。同じ勝点および同じOMW%の順位決定に使われます。</span>
-            </span>
-          </th>
-          <th>OGW%
-            <span class="tooltip">
-                <button type="button" class="tooltip-btn" aria-label="OGW%の説明">?</button>
-                <span class="tooltip-text">対戦相手のゲーム勝率の平均です（BO3用)。同じ勝点、同じOMW%、同じGW% の順位決定に使われます。</span>
-            </span>
-            </th>
-            <th>状態</th>
-        </tr>
+        <tr><th>順位</th><th>名前</th><th>勝点</th><th>W-L-D</th><th>OMW%</th><th>GW%</th><th>OGW%</th><th>状態</th></tr>
       </thead>
-        <tbody>
-        ${activePlayers.map((p,i)=>`
-            <tr class="${i===0?'rank-gold':i===1?'rank-silver':i===2?'rank-bronze':''}">
-            <td>${i+1}</td>
-            <td>${p.name}</td>
-            <td>${getPoints(p)}</td>
+      <tbody>
+        ${players.map((p,i)=>`
+          <tr class="${i===0?'rank-gold':i===1?'rank-silver':i===2?'rank-bronze':''}">
+            <td>${i+1}</td><td>${p.name}</td><td>${getPoints(p)}</td>
             <td>${p.wins}-${p.losses}-${p.draws}</td>
             <td>${(calcOMW(p)*100).toFixed(1)}%</td>
             <td>${(calcGW(p)*100).toFixed(1)}%</td>
             <td>${(calcOGW(p)*100).toFixed(1)}%</td>
-            <td>
-                <span class="badge badge-active">参加</span>
-                ${state.started ? `<button class="btn btn-ghost btn-sm" onclick="toggleDrop(${p.id})">DROP</button>` : ''}
-            </td>
-            </tr>
+            <td><span class="badge ${p.dropped?'badge-drop':'badge-active'}">${p.dropped?'DROP':'参加'}</span></td>
+          </tr>
         `).join('')}
-
-        ${droppedPlayers.length > 0 ? `
-            <tr class="drop-section-row">
-            <td colspan="8">DROP済み</td>
-            </tr>
-        ` : ''}
-
-        ${droppedPlayers.map(p=>`
-            <tr class="dropped-row">
-            <td>-</td>
-            <td>${p.name}</td>
-            <td>${getPoints(p)}</td>
-            <td>${p.wins}-${p.losses}-${p.draws}</td>
-            <td>${(calcOMW(p)*100).toFixed(1)}%</td>
-            <td>${(calcGW(p)*100).toFixed(1)}%</td>
-            <td>${(calcOGW(p)*100).toFixed(1)}%</td>
-            <td>
-                <span class="badge badge-drop">DROP</span>
-                ${state.started ? `<button class="btn btn-ghost btn-sm" onclick="toggleDrop(${p.id})">復帰</button>` : ''}
-            </td>
-            </tr>
-        `).join('')}
-        </tbody>
+      </tbody>
     </table>
   `;
 }
 
 // ── CSVエクスポート ──
 function exportCSV(){
-  const players = getSortedPlayers(true);
+  const players = getSortedPlayers();
   const headers = ['順位','名前','勝点','勝','負','分','OMW%','GW%','OGW%','状態'];
   const rows = players.map((p,i)=>[
     i+1, p.name, getPoints(p), p.wins, p.losses, p.draws,
@@ -512,54 +639,37 @@ function exportCSV(){
 // ── リセット ──
 function resetAll(){
   if(!confirm('大会データをすべてリセットしますか？')) return;
-  state = {name:'',players:[],rounds:[],currentRound:0,totalRounds:0,started:false};
-  save(); renderPlayers(); renderRound(); renderStanding();
+  state = {tournamentId:null,name:'',players:[],rounds:[],currentRound:0,totalRounds:0,started:false};
+  renderPlayers(); renderRound(); renderStanding();
   document.getElementById('inp-tournament-name').value='';
+  document.getElementById('tournament-name-display').textContent='';
 }
 
 // ── タイマー ──
-let timerSec = 25*60;
-let timerRunning = false;
-let timerInterval = null;
-
+let timerSec=50*60, timerRunning=false, timerInterval=null;
 function timerStart(){
   if(timerRunning) return;
-  timerRunning = true;
-  timerInterval = setInterval(()=>{
-    timerSec--;
-    updateTimerDisplay();
-    if(timerSec<=0){ clearInterval(timerInterval); timerRunning=false; }
-  },1000);
+  timerRunning=true;
+  timerInterval=setInterval(()=>{ timerSec--; updateTimerDisplay(); if(timerSec<=0){clearInterval(timerInterval);timerRunning=false;} },1000);
 }
-
-function timerPause(){
-  clearInterval(timerInterval);
-  timerRunning = false;
-}
-
+function timerPause(){ clearInterval(timerInterval); timerRunning=false; }
 function timerReset(){
-  clearInterval(timerInterval);
-  timerRunning = false;
-  const custom = parseInt(document.getElementById('timer-custom').value);
-  const preset = parseInt(document.getElementById('timer-preset').value);
-  timerSec = (custom>0?custom:preset)*60;
+  clearInterval(timerInterval); timerRunning=false;
+  const custom=parseInt(document.getElementById('timer-custom').value);
+  const preset=parseInt(document.getElementById('timer-preset').value);
+  timerSec=(custom>0?custom:preset)*60;
   updateTimerDisplay();
 }
-
 function updateTimerDisplay(){
-  const m = Math.floor(timerSec/60);
-  const s = timerSec%60;
-  const el = document.getElementById('timer-display');
-  el.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-  el.className = 'timer-display' + (timerSec<=60?' danger':timerSec<=300?' warn':'');
+  const m=Math.floor(timerSec/60), s=timerSec%60;
+  const el=document.getElementById('timer-display');
+  el.textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  el.className='timer-display'+(timerSec<=60?' danger':timerSec<=300?' warn':'');
 }
 
 // ── 初期化 ──
 renderPlayers();
 updateTimerDisplay();
-if(state.started){
-  document.getElementById('tournament-name-display').textContent = state.name;
-}
 </script>
 </body>
 </html>

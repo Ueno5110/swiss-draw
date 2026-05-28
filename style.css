@@ -4,46 +4,31 @@
 ======================================== */
 
     :root{
-      --bg:#0f1117;
-      --bg2:#1a1d27;
-      --bg3:#22263a;
-      --border:#2e3248;
-      --text:#e8eaf6;
-      --text2:#8b90b8;
-      --accent:#6c63ff;
-      --green:#1D9E75;
-      --red:#e05c5c;
-      --warn:#f0a04b;
-      --radius:10px;
+      --bg:#0f1117;--bg2:#1a1d27;--bg3:#22263a;--border:#2e3248;
+      --text:#e8eaf6;--text2:#8b90b8;--accent:#6c63ff;--green:#1D9E75;
+      --red:#e05c5c;--warn:#f0a04b;--radius:10px;
     }
     *{box-sizing:border-box;margin:0;padding:0}
     body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif;min-height:100vh;font-size:14px;}
     .app{max-width:900px;margin:0 auto;padding:16px;}
-
-    /* ヘッダー */
     header{display:flex;align-items:center;justify-content:space-between;padding:12px 0 20px;}
     .logo{font-size:18px;font-weight:700;color:var(--accent);letter-spacing:1px;}
     .logo span{color:var(--text);}
-
-    /* タブ */
+    .conn-status{font-size:11px;padding:3px 8px;border-radius:999px;}
+    .conn-ok{background:#1a2e1a;color:var(--green);}
+    .conn-err{background:#3a1a1a;color:var(--red);}
     .tabs{display:flex;gap:4px;background:var(--bg2);border-radius:var(--radius);padding:4px;margin-bottom:20px;}
     .tab{flex:1;padding:8px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text2);border:none;background:transparent;transition:all .2s;text-align:center;}
     .tab.active{background:var(--accent);color:#fff;font-weight:600;}
     .tab:hover:not(.active){background:var(--bg3);color:var(--text);}
     .panel{display:none;}
     .panel.active{display:block;}
-
-    /* カード */
     .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:12px;}
     .card-title{font-size:12px;font-weight:600;color:var(--text2);margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px;}
-
-    /* フォーム */
     .row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
     input,select{background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 12px;font-size:14px;outline:none;transition:border .2s;height:36px;}
     input:focus,select:focus{border-color:var(--accent);}
     input[type=text],input[type=number]{flex:1;min-width:120px;}
-
-    /* ボタン */
     .btn{height:36px;padding:0 16px;border-radius:8px;border:none;cursor:pointer;font-size:13px;font-weight:600;transition:all .2s;white-space:nowrap;}
     .btn-primary{background:var(--accent);color:#fff;}
     .btn-primary:hover{background:#5a52e0;}
@@ -52,42 +37,28 @@
     .btn-danger{background:var(--red);color:#fff;}
     .btn-danger:hover{background:#c04040;}
     .btn-warn{background:var(--warn);color:#fff;}
-    .btn-warn:hover{background:#d08030;}
     .btn-ghost{background:var(--bg3);color:var(--text2);border:1px solid var(--border);}
-    .btn-ghost:hover{color:var(--text);border-color:var(--text2);}
+    .btn-ghost:hover{color:var(--text);}
     .btn-sm{height:28px;padding:0 10px;font-size:12px;}
-
-    /* 統計 */
     .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px;}
     .stat{background:var(--bg3);border-radius:8px;padding:12px 14px;}
     .stat-label{font-size:11px;color:var(--text2);margin-bottom:4px;}
     .stat-value{font-size:22px;font-weight:700;color:var(--accent);}
-
-    /* プレイヤーリスト */
     .player-list{display:flex;flex-direction:column;gap:6px;max-height:300px;overflow-y:auto;}
     .player-item{display:flex;align-items:center;justify-content:space-between;background:var(--bg3);border-radius:8px;padding:8px 12px;}
-    .player-name{font-weight:500;}
     .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600;}
     .badge-active{background:#1a2e1a;color:var(--green);}
     .badge-drop{background:#3a1a1a;color:var(--red);}
-    .badge-bye{background:#1a1a3a;color:#8888ff;}
-
-    /* 対戦カード */
     .match-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;}
     .match-players{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;margin-bottom:10px;}
-    .match-player{text-align:center;font-weight:600;font-size:14px;}
+    .match-player{text-align:center;font-weight:600;}
     .match-vs{color:var(--text2);font-size:12px;font-weight:700;text-align:center;}
     .match-result-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
     .match-result-row select{flex:1;min-width:120px;}
-    .match-result-row input{width:52px;text-align:center;}
-    .game-label{font-size:12px;color:var(--text2);white-space:nowrap;}
+    .match-submitted{font-size:12px;color:var(--green);text-align:center;margin-top:8px;}
     .bye-card{background:#1a1d2e;border:1px solid #2e2e5a;border-radius:8px;padding:10px 14px;margin-bottom:8px;color:#8888ff;font-size:13px;}
-
-    /* ラウンドヘッダー */
     .round-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
     .round-title{font-size:16px;font-weight:700;}
-
-    /* 順位表 */
     table{width:100%;border-collapse:collapse;}
     th{text-align:left;padding:8px 10px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.5px;}
     td{padding:10px;border-bottom:1px solid var(--border);font-size:13px;}
@@ -96,81 +67,17 @@
     .rank-gold td:first-child{color:gold;font-weight:700;}
     .rank-silver td:first-child{color:silver;font-weight:700;}
     .rank-bronze td:first-child{color:#cd7f32;font-weight:700;}
-
-    /* タイマー */
-    .timer-display{font-size:52px;font-weight:700;text-align:center;font-variant-numeric:tabular-nums;color:var(--accent);margin:12px 0;letter-spacing:2px;}
+    .timer-display{font-size:52px;font-weight:700;text-align:center;font-variant-numeric:tabular-nums;color:var(--accent);margin:12px 0;}
     .timer-display.warn{color:var(--warn);}
     .timer-display.danger{color:var(--red);}
     .timer-controls{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;}
-
-    /* 空状態 */
-    .empty{text-align:center;padding:32px;color:var(--text2);font-size:14px;}
-
-    /* 情報ボックス */
-    .info-box{background:var(--bg3);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:10px 14px;font-size:13px;color:var(--text2);margin-bottom:12px;}
-
-    /* ボタングループ */
+    .empty{text-align:center;padding:32px;color:var(--text2);}
     .btn-group{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;}
-
-    /* ツールチップ */
-    .tooltip {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    margin-left: 4px;
-    }
-
-    .tooltip-btn {
-    width: 18px;
-    height: 18px;
-    border: 1px solid var(--border);
-    border-radius: 50%;
-    background: var(--bg);
-    color: var(--text2);
-    font-size: 12px;
-    font-weight: 700;
-    line-height: 1;
-    cursor: help;
-    }
-
-    .tooltip-text {
-    display: none;
-    position: absolute;
-    left: 50%;
-    bottom: calc(100% + 8px);
-    transform: translateX(-50%);
-    width: 220px;
-    padding: 8px 10px;
-    border-radius: 8px;
-    background: #222;
-    color: #fff;
-    font-size: 12px;
-    line-height: 1.5;
-    text-align: left;
-    white-space: normal;
-    z-index: 20;
-    box-shadow: 0 6px 18px rgba(0,0,0,.18);
-    }
-
-    .tooltip:hover .tooltip-text,
-    .tooltip:focus-within .tooltip-text {
-    display: block;
-    }
-
-    /* ドロップセクション */
-    .drop-section-row td {
-    padding-top: 18px;
-    color: var(--text2);
-    font-size: 12px;
-    font-weight: 700;
-    border-top: 1px solid var(--border);
-    }
-
-    .dropped-row {
-    opacity: 0.55;
-    }
-
+    .qr-wrap{text-align:center;padding:16px;}
+    .qr-wrap img{max-width:200px;border-radius:8px;}
+    .qr-url{font-size:12px;color:var(--text2);margin-top:8px;word-break:break-all;}
+    .loading{text-align:center;padding:20px;color:var(--text2);}
     @media(max-width:480px){
-      .match-players{grid-template-columns:1fr auto 1fr;font-size:13px;}
+      .match-players{font-size:13px;}
       .stat-value{font-size:18px;}
     }
