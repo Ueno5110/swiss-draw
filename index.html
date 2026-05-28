@@ -150,7 +150,8 @@ let playerPage = {
   tournament: null,
   players: [],
   matches: [],
-  selectedPlayerId: ''
+  selectedPlayerId: '',
+  showFinalStandings: false
 };
 let playerRoundPoll = null;
 
@@ -787,7 +788,7 @@ async function initPlayerPage(){
     }
     renderPlayerSelector();
     clearInterval(playerRoundPoll);
-    playerRoundPoll = setInterval(refreshPlayerTournamentState, 15000);
+    playerRoundPoll = setInterval(refreshPlayerTournamentState, 10000);
   } catch(e) {
     content.innerHTML = `<div class="empty">大会情報を読み込めませんでした<br><span style="font-size:12px;">${escapeHtml(e.message)}</span></div>`;
   }
@@ -864,9 +865,11 @@ async function refreshPlayerTournamentState(){
 
 function selectPlayerForSubmit(playerId){
   playerPage.selectedPlayerId = playerId;
+  playerPage.showFinalStandings = false;
   storeSelectedPlayer(playerId);
   updateLatestRoundNotice();
   renderPlayerMatch();
+  renderPlayerFinalStanding();
 }
 
 function renderPlayerMatch(){
@@ -951,6 +954,15 @@ function renderPlayerFinalStanding(){
     return;
   }
 
+  if(!playerPage.showFinalStandings){
+    area.innerHTML = `
+      <button class="btn btn-warn final-standing-button" onclick="showPlayerFinalStanding()">
+        最終成績へ
+      </button>
+    `;
+    return;
+  }
+
   const players = getSortedPlayersFrom(playerPage.players);
   area.innerHTML = `
     <div class="card player-standings-card">
@@ -975,6 +987,12 @@ function renderPlayerFinalStanding(){
       </table>
     </div>
   `;
+}
+
+function showPlayerFinalStanding(){
+  playerPage.showFinalStandings = true;
+  renderPlayerFinalStanding();
+  document.getElementById('player-standing-area')?.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 function autoFillPlayerGameCount(){

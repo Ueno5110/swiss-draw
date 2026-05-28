@@ -90,6 +90,7 @@ tr:hover td{background:var(--bg3);}
 .submit-status.success{color:var(--green);}
 .submit-status.error{color:var(--red);}
 .submit-status.waiting{background:rgba(29,158,117,.12);border:1px solid rgba(29,158,117,.35);border-radius:8px;color:var(--green);padding:10px 12px;font-weight:700;}
+.final-standing-button{width:100%;margin-top:14px;}
 .player-standings-card{margin-top:16px;}
 .my-standing-row td{background:rgba(29,158,117,.16)!important;border-color:rgba(29,158,117,.35);}
 .my-standing-badge{display:inline-block;margin-left:6px;background:var(--green);color:#fff;border-radius:999px;padding:2px 7px;font-size:10px;font-weight:700;}
