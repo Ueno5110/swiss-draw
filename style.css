@@ -79,6 +79,8 @@ tr:hover td{background:var(--bg3);}
 .loading{text-align:center;padding:20px;color:var(--text2);}
 .player-app{max-width:560px;}
 .player-summary{display:grid;grid-template-columns:1fr 110px;gap:10px;margin-bottom:14px;}
+.next-round-link{display:block;background:var(--green);color:#fff;text-align:center;text-decoration:none;border-radius:8px;padding:10px 12px;font-size:13px;font-weight:700;margin:0 0 14px;}
+.next-round-link:hover{background:#0F6E56;}
 .field-label{display:block;font-size:12px;font-weight:600;color:var(--text2);margin:12px 0 6px;}
 .player-submit-card select,.player-app select{width:100%;}
 .player-opponent{font-size:13px;color:var(--text2);text-align:center;margin:2px 0 12px;}

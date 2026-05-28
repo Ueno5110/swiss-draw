@@ -152,11 +152,18 @@ let playerPage = {
   matches: [],
   selectedPlayerId: ''
 };
+let playerRoundPoll = null;
 
 function escapeHtml(value){
   return String(value ?? '').replace(/[&<>"']/g, ch => ({
     '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
   }[ch]));
+}
+
+function applyResultAutoGame(result, gw1, gw2){
+  if(result === 'p1' && gw1 === 0) gw1 = 1;
+  if(result === 'p2' && gw2 === 0) gw2 = 1;
+  return { gw1, gw2 };
 }
 
 function switchTab(t){
@@ -462,9 +469,18 @@ function renderMatch(m, i){
 async function updateResult(i, matchId){
   const round = state.rounds[state.currentRound-1];
   const result = document.getElementById('res-'+i).value || null;
+  const gw1El = document.getElementById('gw1-'+i);
+  const gw2El = document.getElementById('gw2-'+i);
+  let gw1 = parseInt(gw1El.value, 10) || 0;
+  let gw2 = parseInt(gw2El.value, 10) || 0;
+  ({ gw1, gw2 } = applyResultAutoGame(result, gw1, gw2));
+  gw1El.value = gw1;
+  gw2El.value = gw2;
   round.matches[i].result = result;
+  round.matches[i].gw1 = gw1;
+  round.matches[i].gw2 = gw2;
   if(matchId && !matchId.startsWith('undefined')){
-    await db.from('matches').update({result}).eq('id', matchId);
+    await db.from('matches').update({result, gw1, gw2}).eq('id', matchId);
   }
 }
 
@@ -680,6 +696,8 @@ async function initPlayerPage(){
     playerPage.players = players || [];
     playerPage.matches = matches || [];
     renderPlayerSelector();
+    clearInterval(playerRoundPoll);
+    playerRoundPoll = setInterval(refreshPlayerTournamentState, 15000);
   } catch(e) {
     content.innerHTML = `<div class="empty">大会情報を読み込めませんでした<br><span style="font-size:12px;">${escapeHtml(e.message)}</span></div>`;
   }
@@ -706,6 +724,7 @@ function renderPlayerSelector(){
         <div class="stat-value">R${roundNum}</div>
       </div>
     </div>
+    <div id="next-round-area">${renderLatestRoundNotice(roundNum)}</div>
     <label class="field-label" for="player-select">あなたの名前</label>
     <select id="player-select" onchange="selectPlayerForSubmit(this.value)">
       <option value="">選択してください</option>
@@ -714,6 +733,34 @@ function renderPlayerSelector(){
     <div id="player-match-area" style="margin-top:14px;"></div>
   `;
   renderPlayerMatch();
+}
+
+function renderLatestRoundNotice(roundNum){
+  const latestRound = Number(playerPage.tournament?.current_round || 0);
+  if(!latestRound || latestRound <= roundNum) return '';
+  const url = `${location.origin}${location.pathname}?tid=${encodeURIComponent(playerPage.tournament.id)}&round=${latestRound}`;
+  return `
+    <a class="next-round-link" href="${url}">
+      最新ラウンドへ進む（R${latestRound}）
+    </a>
+  `;
+}
+
+function updateLatestRoundNotice(){
+  const area = document.getElementById('next-round-area');
+  if(!area) return;
+  area.innerHTML = renderLatestRoundNotice(parseInt(params.get('round'), 10));
+}
+
+async function refreshPlayerTournamentState(){
+  if(!playerPage.tournament?.id) return;
+  const { data, error } = await db.from('tournaments')
+    .select('id,name,total_rounds,current_round,started')
+    .eq('id', playerPage.tournament.id)
+    .single();
+  if(error) return;
+  playerPage.tournament = data;
+  updateLatestRoundNotice();
 }
 
 function selectPlayerForSubmit(playerId){
@@ -758,7 +805,7 @@ function renderPlayerMatch(){
       <div class="player-opponent">対戦相手：${escapeHtml(opponent?opponent.name:'?')}</div>
 
       <label class="field-label" for="player-result">試合結果</label>
-      <select id="player-result">
+      <select id="player-result" onchange="autoFillPlayerGameCount()">
         <option value="">選択してください</option>
         <option value="${myWinValue}" ${match.result===myWinValue?'selected':''}>自分の勝ち</option>
         <option value="${oppWinValue}" ${match.result===oppWinValue?'selected':''}>相手の勝ち</option>
@@ -783,10 +830,22 @@ function renderPlayerMatch(){
   `;
 }
 
+function autoFillPlayerGameCount(){
+  const result = document.getElementById('player-result')?.value || null;
+  const gw1El = document.getElementById('player-gw1');
+  const gw2El = document.getElementById('player-gw2');
+  if(!gw1El || !gw2El) return;
+  let gw1 = parseInt(gw1El.value, 10) || 0;
+  let gw2 = parseInt(gw2El.value, 10) || 0;
+  ({ gw1, gw2 } = applyResultAutoGame(result, gw1, gw2));
+  gw1El.value = gw1;
+  gw2El.value = gw2;
+}
+
 async function submitPlayerResult(matchId){
   const result = document.getElementById('player-result').value;
-  const gw1 = parseInt(document.getElementById('player-gw1').value, 10);
-  const gw2 = parseInt(document.getElementById('player-gw2').value, 10);
+  let gw1 = parseInt(document.getElementById('player-gw1').value, 10) || 0;
+  let gw2 = parseInt(document.getElementById('player-gw2').value, 10) || 0;
   const status = document.getElementById('player-submit-status');
 
   if(!result){
@@ -794,6 +853,9 @@ async function submitPlayerResult(matchId){
     status.className = 'submit-status error';
     return;
   }
+  ({ gw1, gw2 } = applyResultAutoGame(result, gw1, gw2));
+  document.getElementById('player-gw1').value = gw1;
+  document.getElementById('player-gw2').value = gw2;
   if(Number.isNaN(gw1) || Number.isNaN(gw2) || gw1 < 0 || gw2 < 0 || gw1 > 2 || gw2 > 2){
     status.textContent = 'ゲーム数は0〜2で入力してください';
     status.className = 'submit-status error';
@@ -813,6 +875,7 @@ async function submitPlayerResult(matchId){
 
     const idx = playerPage.matches.findIndex(m => m.id === matchId);
     if(idx >= 0) playerPage.matches[idx] = data;
+    await refreshPlayerTournamentState();
     status.textContent = '結果を送信しました。運営の画面で反映されます。';
     status.className = 'submit-status success';
   } catch(e) {
