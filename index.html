@@ -150,8 +150,7 @@ let playerPage = {
   tournament: null,
   players: [],
   matches: [],
-  selectedPlayerId: '',
-  showFinalStandings: false
+  selectedPlayerId: ''
 };
 let playerRoundPoll = null;
 
@@ -181,11 +180,13 @@ function storeSelectedPlayer(playerId){
   localStorage.setItem(getPlayerStorageKey(), playerId);
 }
 
-function getPlayerRoundUrl(roundNum, playerId=playerPage.selectedPlayerId){
+function getPlayerRoundUrl(roundNum, playerId=playerPage.selectedPlayerId, view=''){
   const url = new URL(location.href);
   url.searchParams.set('tid', playerPage.tournament.id);
   url.searchParams.set('round', String(roundNum));
   if(playerId) url.searchParams.set('player', playerId);
+  if(view) url.searchParams.set('view', view);
+  else url.searchParams.delete('view');
   return url.toString();
 }
 
@@ -786,7 +787,8 @@ async function initPlayerPage(){
       playerPage.selectedPlayerId = storedPlayerId;
       storeSelectedPlayer(storedPlayerId);
     }
-    renderPlayerSelector();
+    if(params.get('view') === 'standings') renderPlayerStandingPage();
+    else renderPlayerSelector();
     clearInterval(playerRoundPoll);
     playerRoundPoll = setInterval(refreshPlayerTournamentState, 10000);
   } catch(e) {
@@ -815,6 +817,7 @@ function renderPlayerSelector(){
         <div class="stat-value">R${roundNum}</div>
       </div>
     </div>
+    <div id="final-standing-link-area">${renderFinalStandingLink(roundNum)}</div>
     <div id="next-round-area">${renderLatestRoundNotice(roundNum)}</div>
     <label class="field-label" for="player-select">あなたの名前</label>
     <select id="player-select" onchange="selectPlayerForSubmit(this.value)">
@@ -822,10 +825,26 @@ function renderPlayerSelector(){
       ${options}
     </select>
     <div id="player-match-area" style="margin-top:14px;"></div>
-    <div id="player-standing-area"></div>
   `;
   renderPlayerMatch();
-  renderPlayerFinalStanding();
+}
+
+function isFinalStandingReady(){
+  const roundNum = parseInt(params.get('round'), 10);
+  const isFinalRound = roundNum >= Number(playerPage.tournament?.total_rounds || 0);
+  return isFinalRound && playerPage.matches.length > 0 && playerPage.matches.every(m => m.submitted);
+}
+
+function renderFinalStandingLink(roundNum){
+  if(!isFinalStandingReady()) return '';
+  const url = getPlayerRoundUrl(roundNum, playerPage.selectedPlayerId, 'standings');
+  return `<a class="final-standing-link" href="${url}">最終成績へ</a>`;
+}
+
+function updateFinalStandingLink(){
+  const area = document.getElementById('final-standing-link-area');
+  if(!area) return;
+  area.innerHTML = renderFinalStandingLink(parseInt(params.get('round'), 10));
 }
 
 function renderLatestRoundNotice(roundNum){
@@ -858,18 +877,20 @@ async function refreshPlayerTournamentState(){
   playerPage.players = players || [];
   playerPage.matches = matches || [];
   sortMatchesForTables(playerPage.matches, playerPage.players);
-  updateLatestRoundNotice();
-  renderPlayerMatch();
-  renderPlayerFinalStanding();
+  if(params.get('view') === 'standings') renderPlayerStandingPage();
+  else{
+    updateLatestRoundNotice();
+    updateFinalStandingLink();
+    renderPlayerMatch();
+  }
 }
 
 function selectPlayerForSubmit(playerId){
   playerPage.selectedPlayerId = playerId;
-  playerPage.showFinalStandings = false;
   storeSelectedPlayer(playerId);
   updateLatestRoundNotice();
+  updateFinalStandingLink();
   renderPlayerMatch();
-  renderPlayerFinalStanding();
 }
 
 function renderPlayerMatch(){
@@ -943,30 +964,31 @@ function renderPlayerMatch(){
   `;
 }
 
-function renderPlayerFinalStanding(){
-  const area = document.getElementById('player-standing-area');
-  if(!area) return;
+function renderPlayerStandingPage(){
   const roundNum = parseInt(params.get('round'), 10);
-  const isFinalRound = roundNum >= Number(playerPage.tournament?.total_rounds || 0);
-  const allSubmitted = playerPage.matches.length > 0 && playerPage.matches.every(m => m.submitted);
-  if(!isFinalRound || !allSubmitted){
-    area.innerHTML = '';
-    return;
-  }
+  const content = document.getElementById('player-page-content');
+  if(!content) return;
 
-  if(!playerPage.showFinalStandings){
-    area.innerHTML = `
-      <button class="btn btn-warn final-standing-button" onclick="showPlayerFinalStanding()">
-        最終成績へ
-      </button>
+  if(!isFinalStandingReady()){
+    content.innerHTML = `
+      <div class="result-hero">
+        <div class="result-kicker">RESULTS</div>
+        <h1>最終成績はまだ準備中です</h1>
+        <p>全卓の結果登録がそろうと、このページで最終成績を確認できます。</p>
+      </div>
+      <a class="btn btn-ghost back-link-button" href="${getPlayerRoundUrl(roundNum)}">ラウンド画面へ戻る</a>
     `;
     return;
   }
 
   const players = getSortedPlayersFrom(playerPage.players);
-  area.innerHTML = `
-    <div class="card player-standings-card">
-      <div class="card-title">最終成績</div>
+  content.innerHTML = `
+    <div class="result-hero">
+      <div class="result-kicker">FINAL RESULTS</div>
+      <h1>最終成績</h1>
+      <p>${escapeHtml(playerPage.tournament.name)} / R${roundNum}</p>
+    </div>
+    <div class="player-standings-card">
       <table>
         <thead>
           <tr><th>順位</th><th>名前</th><th>勝点</th><th>W-L-D</th><th>OMW%</th><th>GW%</th><th>OGW%</th></tr>
@@ -986,13 +1008,8 @@ function renderPlayerFinalStanding(){
         </tbody>
       </table>
     </div>
+    <a class="btn btn-ghost back-link-button" href="${getPlayerRoundUrl(roundNum)}">ラウンド画面へ戻る</a>
   `;
-}
-
-function showPlayerFinalStanding(){
-  playerPage.showFinalStandings = true;
-  renderPlayerFinalStanding();
-  document.getElementById('player-standing-area')?.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
 function autoFillPlayerGameCount(){
