@@ -11,7 +11,7 @@
 <body>
 <div id="admin-app" class="app">
   <header>
-    <div class="logo">SWISS<span>DRAW</span></div>
+    <img src="safari-taisen-logo.png" alt="サファリ大戦！" class="logo-mark">
     <div style="display:flex;align-items:center;gap:10px;">
       <span id="conn-status" class="conn-status conn-err">接続中...</span>
       <span id="tournament-name-display" style="font-size:12px;color:var(--text2);"></span>
@@ -93,12 +93,12 @@
           <option value="50">50分</option>
           <option value="40">40分</option>
           <option value="30">30分</option>
-          <option value="25">25分</option>
+          <option value="25" selected>25分</option>
           <option value="20">20分</option>
         </select>
         <input type="number" id="timer-custom" placeholder="カスタム(分)" min="1" max="180" style="width:130px;" onchange="timerReset()">
       </div>
-      <div class="timer-display" id="timer-display">50:00</div>
+      <div class="timer-display" id="timer-display">25:00</div>
       <div class="timer-controls">
         <button class="btn btn-primary" onclick="timerStart()">スタート</button>
         <button class="btn btn-ghost" onclick="timerPause()">一時停止</button>
@@ -188,6 +188,35 @@ function getPlayerRoundUrl(roundNum, playerId=playerPage.selectedPlayerId, view=
   if(view) url.searchParams.set('view', view);
   else url.searchParams.delete('view');
   return url.toString();
+}
+
+async function copyText(value, statusId){
+  const status = document.getElementById(statusId);
+  try {
+    if(navigator.clipboard && window.isSecureContext){
+      await navigator.clipboard.writeText(value);
+    }else{
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    if(status){
+      status.textContent = 'コピーしました';
+      status.className = 'copy-status success';
+      setTimeout(()=>{ status.textContent=''; status.className='copy-status'; }, 1800);
+    }
+  } catch(e) {
+    if(status){
+      status.textContent = 'コピーに失敗しました';
+      status.className = 'copy-status error';
+    }
+  }
 }
 
 function switchTab(t){
@@ -429,6 +458,7 @@ function renderRound(){
   const round = state.rounds[state.currentRound-1];
   sortMatchesForTables(round.matches, state.players);
   const isLast = state.currentRound >= state.totalRounds;
+  const submitStatus = getRoundSubmitStatus(round);
   const playerUrl = `${location.origin}${location.pathname}?tid=${state.tournamentId}&round=${state.currentRound}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(playerUrl)}`;
 
@@ -444,7 +474,21 @@ function renderRound(){
       <div class="card-title">参加者用QRコード</div>
       <div class="qr-wrap">
         <img src="${qrUrl}" alt="QRコード">
+        <div class="copy-panel">
+          <div class="copy-row">
+            <div>
+              <div class="copy-label">大会ID</div>
+              <div class="copy-value">${state.tournamentId}</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="copyText('${state.tournamentId}', 'copy-id-status')">コピー</button>
+          </div>
+          <div id="copy-id-status" class="copy-status"></div>
+        </div>
         <div class="qr-url">${playerUrl}</div>
+        <div class="copy-actions">
+          <button class="btn btn-primary btn-sm" onclick="copyText('${playerUrl}', 'copy-url-status')">参加者URLをコピー</button>
+        </div>
+        <div id="copy-url-status" class="copy-status"></div>
         <p style="font-size:12px;color:var(--text2);margin-top:8px;">参加者はこのQRを読み取って結果を送信できます</p>
       </div>
     </div>
@@ -453,6 +497,7 @@ function renderRound(){
       <div class="round-title">ラウンド ${state.currentRound} 対戦表</div>
       <button class="btn btn-ghost btn-sm" onclick="refreshResults()">結果を更新</button>
     </div>
+    ${renderRoundSubmitStatus(submitStatus)}
     <div id="matches-list">
       ${round.matches.map((m,i)=>renderMatch(m,i)).join('')}
     </div>
@@ -460,6 +505,42 @@ function renderRound(){
       <button class="btn btn-success" onclick="submitRound()">結果を確定する</button>
       ${round.submitted && !isLast ? `<button class="btn btn-primary" onclick="nextRound()">次のラウンドへ →</button>` : ''}
       ${round.submitted && isLast ? `<button class="btn btn-warn" onclick="switchTab('standing')">最終順位を見る</button>` : ''}
+    </div>
+  `;
+}
+
+function getRoundSubmitStatus(round){
+  const total = round.matches.length;
+  const submitted = round.matches.filter(m => m.submitted || m.result === 'bye' || m.p2 === 'bye').length;
+  const pending = round.matches
+    .map((m, i) => ({ match: m, tableNo: i + 1 }))
+    .filter(item => !(item.match.submitted || item.match.result === 'bye' || item.match.p2 === 'bye'));
+  return {
+    total,
+    submitted,
+    pending,
+    percent: total ? Math.round((submitted / total) * 100) : 0
+  };
+}
+
+function renderRoundSubmitStatus(status){
+  const pendingHtml = status.pending.length
+    ? status.pending.map(item => `<span class="pending-table-chip">第${item.tableNo}卓</span>`).join('')
+    : '<span class="all-submitted-text">全卓送信済み</span>';
+  return `
+    <div class="submit-overview">
+      <div class="submit-overview-top">
+        <div>
+          <div class="submit-overview-label">結果送信状況</div>
+          <div class="submit-overview-count">${status.submitted} / ${status.total} 卓</div>
+        </div>
+        <span class="submit-overview-percent">${status.percent}%</span>
+      </div>
+      <div class="submit-progress"><div style="width:${status.percent}%"></div></div>
+      <div class="pending-tables">
+        <span class="pending-label">未送信</span>
+        ${pendingHtml}
+      </div>
     </div>
   `;
 }
@@ -733,11 +814,29 @@ function resetAll(){
   document.getElementById('tournament-name-display').textContent='';
 }
 
-let timerSec=50*60, timerRunning=false, timerInterval=null;
+let timerSec=25*60, timerRunning=false, timerInterval=null;
+
+const _ac = new (window.AudioContext || window.webkitAudioContext)();
+function playTimeupSound(){
+  if(_ac.state==='suspended') _ac.resume();
+  [{freq:880,start:0.0,dur:0.5},{freq:660,start:0.5,dur:0.5},{freq:440,start:1.0,dur:1.2}]
+  .forEach(({freq,start,dur})=>{
+    const o=_ac.createOscillator(), g=_ac.createGain();
+    o.connect(g); g.connect(_ac.destination);
+    o.type='sine';
+    o.frequency.setValueAtTime(freq, _ac.currentTime+start);
+    g.gain.setValueAtTime(0.5, _ac.currentTime+start);
+    g.gain.exponentialRampToValueAtTime(0.001, _ac.currentTime+start+dur);
+    o.start(_ac.currentTime+start);
+    o.stop(_ac.currentTime+start+dur);
+  });
+}
+
 function timerStart(){
   if(timerRunning) return;
+  _ac.resume();
   timerRunning=true;
-  timerInterval=setInterval(()=>{ timerSec--; updateTimerDisplay(); if(timerSec<=0){clearInterval(timerInterval);timerRunning=false;} },1000);
+  timerInterval=setInterval(()=>{ timerSec--; updateTimerDisplay(); if(timerSec<=0){clearInterval(timerInterval);timerRunning=false;playTimeupSound();} },1000);
 }
 function timerPause(){ clearInterval(timerInterval); timerRunning=false; }
 function timerReset(){
