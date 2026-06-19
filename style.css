@@ -122,6 +122,16 @@ tr:hover td{background:var(--bg3);}
 .back-link-button{display:flex;align-items:center;justify-content:center;text-decoration:none;margin-top:12px;}
 .my-standing-row td{background:rgba(29,158,117,.16)!important;border-color:rgba(29,158,117,.35);}
 .my-standing-badge{display:inline-block;margin-left:6px;background:var(--green);color:#fff;border-radius:999px;padding:2px 7px;font-size:10px;font-weight:700;}
+.accordion-card{padding:0;}
+.accordion-toggle{
+  width:100%;display:flex;align-items:center;justify-content:space-between;
+  gap:8px;background:transparent;border:none;cursor:pointer;
+  color:var(--text);padding:16px;border-radius:var(--radius);
+}
+.accordion-toggle:hover{background:var(--bg3);}
+.accordion-icon{font-size:11px;color:var(--text2);flex-shrink:0;}
+.accordion-body{padding:0 16px 16px;}
+.round-select{height:32px;font-size:13px;padding:0 8px;min-width:160px;}
 @media(max-width:480px){
   .app{padding:12px;}
   .tabs{gap:2px;}

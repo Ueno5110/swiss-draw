@@ -143,8 +143,10 @@ async function checkConnection(targetId='conn-status'){
 
 let state = {
   tournamentId: null, name: '', players: [], rounds: [],
-  currentRound: 0, totalRounds: 0, started: false
+  currentRound: 0, totalRounds: 0, started: false,
+  viewRound: 1
 };
+let _currentPlayerUrl = '';
 
 let playerPage = {
   tournament: null,
@@ -241,7 +243,7 @@ function addPlayer(){
   if(state.started){ alert('大会開始後は参加者を追加できません'); return; }
   if(state.players.find(p=>p.name===name)){ alert('同じ名前のプレイヤーが既にいます'); return; }
   state.players.push({
-    id: 'local_' + Date.now() + Math.random(), name, dropped: false,
+    id: crypto.randomUUID(), name, dropped: false,
     wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
   });
   inp.value = '';
@@ -255,7 +257,7 @@ function bulkAdd(){
     const name = n.trim();
     if(!name || state.players.find(p=>p.name===name)) return;
     state.players.push({
-      id: 'local_'+Date.now()+Math.random(), name, dropped: false,
+      id: crypto.randomUUID(), name, dropped: false,
       wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
     });
   });
@@ -330,8 +332,8 @@ async function startTournament(){
     }));
 
     document.getElementById('tournament-name-display').textContent = name;
-    alert(`大会ID: ${t.id}\n\nこのIDを参加者に共有してください。`);
 
+    state.qrOpen = true;
     await nextRound();
     switchTab('round');
   } catch(e) {
@@ -417,6 +419,7 @@ async function nextRound(){
   }
 
   state.currentRound++;
+  state.viewRound = state.currentRound;
 
   try {
     const matchRows = matches.map(m=>({
@@ -455,12 +458,14 @@ async function nextRound(){
 function renderRound(){
   const el = document.getElementById('round-content');
   if(!state.started){ el.innerHTML='<div class="empty">大会を開始してください</div>'; return; }
-  const round = state.rounds[state.currentRound-1];
+  if(!state.viewRound || state.viewRound > state.currentRound) state.viewRound = state.currentRound;
+  const round = state.rounds[state.viewRound-1];
   sortMatchesForTables(round.matches, state.players);
   const isLast = state.currentRound >= state.totalRounds;
+  const isCurrentRound = state.viewRound === state.currentRound;
   const submitStatus = getRoundSubmitStatus(round);
-  const playerUrl = `${location.origin}${location.pathname}?tid=${state.tournamentId}&round=${state.currentRound}`;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(playerUrl)}`;
+  _currentPlayerUrl = `${location.origin}${location.pathname}?tid=${state.tournamentId}&round=${state.currentRound}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(_currentPlayerUrl)}`;
 
   el.innerHTML = `
     <div class="stat-grid">
@@ -470,9 +475,13 @@ function renderRound(){
       <div class="stat"><div class="stat-label">参加者</div><div class="stat-value">${state.players.filter(p=>!p.dropped).length}人</div></div>
     </div>
 
-    <div class="card">
-      <div class="card-title">参加者用QRコード</div>
-      <div class="qr-wrap">
+    <div class="card accordion-card">
+      <button class="accordion-toggle" onclick="toggleQR(this)" aria-expanded="${state.qrOpen?'true':'false'}">
+        <span class="card-title" style="margin:0;">参加者用QRコード</span>
+        <span class="accordion-icon">${state.qrOpen?'▲':'▼'}</span>
+      </button>
+      <div class="accordion-body" style="display:${state.qrOpen?'block':'none'};">
+        <div class="qr-wrap">
         <img src="${qrUrl}" alt="QRコード">
         <div class="copy-panel">
           <div class="copy-row">
@@ -480,21 +489,28 @@ function renderRound(){
               <div class="copy-label">大会ID</div>
               <div class="copy-value">${state.tournamentId}</div>
             </div>
-            <button class="btn btn-ghost btn-sm" onclick="copyText('${state.tournamentId}', 'copy-id-status')">コピー</button>
+            <button class="btn btn-ghost btn-sm" onclick="copyText(state.tournamentId, 'copy-id-status')">コピー</button>
           </div>
           <div id="copy-id-status" class="copy-status"></div>
         </div>
-        <div class="qr-url">${playerUrl}</div>
+        <div class="qr-url">${_currentPlayerUrl}</div>
         <div class="copy-actions">
-          <button class="btn btn-primary btn-sm" onclick="copyText('${playerUrl}', 'copy-url-status')">参加者URLをコピー</button>
+          <button class="btn btn-primary btn-sm" onclick="copyText(_currentPlayerUrl, 'copy-url-status')">参加者URLをコピー</button>
         </div>
         <div id="copy-url-status" class="copy-status"></div>
         <p style="font-size:12px;color:var(--text2);margin-top:8px;">参加者はこのQRを読み取って結果を送信できます</p>
       </div>
     </div>
+    </div>
 
     <div class="round-header">
-      <div class="round-title">ラウンド ${state.currentRound} 対戦表</div>
+      <select class="round-select" onchange="switchViewRound(+this.value)">
+        ${Array.from({length: state.currentRound}, (_,i) => `
+          <option value="${i+1}" ${i+1===state.viewRound?'selected':''}>
+            R${i+1}${i+1<state.currentRound?' (確定済み)':''}
+          </option>
+        `).join('')}
+      </select>
       <button class="btn btn-ghost btn-sm" onclick="refreshResults()">結果を更新</button>
     </div>
     ${renderRoundSubmitStatus(submitStatus)}
@@ -502,9 +518,10 @@ function renderRound(){
       ${round.matches.map((m,i)=>renderMatch(m,i)).join('')}
     </div>
     <div class="btn-group">
-      <button class="btn btn-success" onclick="submitRound()">結果を確定する</button>
-      ${round.submitted && !isLast ? `<button class="btn btn-primary" onclick="nextRound()">次のラウンドへ →</button>` : ''}
-      ${round.submitted && isLast ? `<button class="btn btn-warn" onclick="switchTab('standing')">最終順位を見る</button>` : ''}
+      ${isCurrentRound ? `<button class="btn btn-success" id="btn-submit-round" onclick="submitRound()">結果を確定する</button>` : ''}
+      ${isCurrentRound && round.submitted && !isLast ? `<button class="btn btn-primary" onclick="nextRound()">次のラウンドへ →</button>` : ''}
+      ${isCurrentRound && round.submitted && isLast ? `<button class="btn btn-warn" onclick="switchTab('standing')">最終順位を見る</button>` : ''}
+      ${!isCurrentRound ? `<div style="font-size:12px;color:var(--text2);padding:8px 0;">確定済みラウンドは編集できません</div>` : ''}
     </div>
   `;
 }
@@ -632,10 +649,16 @@ async function refreshResults(){
 }
 
 async function submitRound(){
+  const btn = document.getElementById('btn-submit-round');
+  if(btn) { btn.disabled = true; btn.textContent = '確定中...'; }
+
   const round = state.rounds[state.currentRound-1];
   const unfinished = round.matches.filter(m=>(!m.result||m.result==='')&&m.p2!=='bye');
   if(unfinished.length>0){
-    if(!confirm(`${unfinished.length}試合の結果が未入力です。このまま確定しますか？`)) return;
+    if(!confirm(`${unfinished.length}試合の結果が未入力です。このまま確定しますか？`)){
+      if(btn) { btn.disabled = false; btn.textContent = '結果を確定する'; }
+      return;
+    }
   }
 
   round.matches.forEach(m=>{
@@ -808,7 +831,7 @@ function exportCSV(){
 
 function resetAll(){
   if(!confirm('大会データをすべてリセットしますか？')) return;
-  state = {tournamentId:null,name:'',players:[],rounds:[],currentRound:0,totalRounds:0,started:false};
+  state = {tournamentId:null, name:'', players:[], rounds:[], currentRound:0, totalRounds:0, started:false, viewRound:1, qrOpen:false};
   renderPlayers(); renderRound(); renderStanding();
   document.getElementById('inp-tournament-name').value='';
   document.getElementById('tournament-name-display').textContent='';
@@ -1178,6 +1201,19 @@ if(isPlayerPage){
   checkConnection();
   renderPlayers();
   updateTimerDisplay();
+}
+
+function toggleQR(btn){
+  state.qrOpen = !state.qrOpen;
+  const body = btn.nextElementSibling;
+  body.style.display = state.qrOpen ? 'block' : 'none';
+  btn.setAttribute('aria-expanded', String(state.qrOpen));
+  btn.querySelector('.accordion-icon').textContent = state.qrOpen ? '▲' : '▼';
+}
+
+function switchViewRound(n){
+  state.viewRound = n;
+  renderRound();
 }
 </script>
 </body>
