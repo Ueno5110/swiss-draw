@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>スイスドロー大会管理（管理者用）</title>
+  <meta name="description" content="カードゲーム向けスイスドロー形式の大会管理ツール。無料・登録不要でブラウザから使えます。">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <link rel="stylesheet" href="style.css">
+  <script src="shared.js"></script>
+</head>
+<body>
+<div id="admin-app" class="app">
+  <header>
+    <img src="safari-taisen-logo.png" alt="サファリ大戦！" class="logo-mark">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="conn-status" class="conn-status conn-err">接続中...</span>
+      <span id="tournament-name-display" style="font-size:12px;color:var(--text2);"></span>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" onclick="switchTab('setup')">設定</button>
+    <button class="tab" onclick="switchTab('round')">対戦</button>
+    <button class="tab" onclick="switchTab('standing')">順位</button>
+    <button class="tab" onclick="switchTab('timer')">タイマー</button>
+  </div>
+
+  <div id="tab-setup" class="panel active">
+    <div class="card">
+      <div class="card-title">大会設定</div>
+      <div class="row">
+        <input type="text" id="inp-tournament-name" placeholder="大会名（例：第1回〇〇杯）" style="flex:2;">
+        <select id="inp-rounds" onchange="renderPlayers()">
+          <option value="auto">ラウンド数：自動</option>
+          <option value="3">3ラウンド</option>
+          <option value="4">4ラウンド</option>
+          <option value="5">5ラウンド</option>
+          <option value="6">6ラウンド</option>
+          <option value="7">7ラウンド</option>
+          <option value="8">8ラウンド</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">参加者登録</div>
+      <div class="row">
+        <input type="text" id="inp-player" placeholder="プレイヤー名を入力" onkeydown="if(event.key==='Enter')addPlayer()">
+        <button class="btn btn-primary" onclick="addPlayer()">追加</button>
+        <button class="btn btn-ghost" onclick="bulkAdd()">一括入力</button>
+      </div>
+      <div id="player-list" class="player-list"></div>
+      <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <span id="player-count-info" style="font-size:13px;color:var(--text2);">0人登録済み</span>
+        <span id="rounds-preview" style="font-size:13px;color:var(--green);"></span>
+      </div>
+    </div>
+
+    <div class="btn-group">
+      <button class="btn btn-success" onclick="startTournament()" style="flex:1;">大会を開始する</button>
+      <button class="btn btn-ghost" onclick="resetAll()">リセット</button>
+    </div>
+
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">既存の大会を読み込む</div>
+      <div class="row">
+        <input type="text" id="inp-load-id" placeholder="大会IDを入力">
+        <button class="btn btn-ghost" onclick="loadTournament()">読み込む</button>
+      </div>
+      <div id="load-status" style="font-size:12px;color:var(--text2);margin-top:6px;"></div>
+    </div>
+  </div>
+
+  <div id="tab-round" class="panel">
+    <div id="round-content"><div class="empty">大会を開始してください</div></div>
+  </div>
+
+  <div id="tab-standing" class="panel">
+    <div class="card">
+      <div class="card-title">順位表</div>
+      <div id="standing-content"><div class="empty">大会を開始してください</div></div>
+    </div>
+    <div class="btn-group">
+      <button class="btn btn-ghost" onclick="exportCSV()">CSVエクスポート</button>
+    </div>
+  </div>
+
+  <div id="tab-timer" class="panel">
+    <div class="card" style="text-align:center;">
+      <div class="card-title">ラウンドタイマー</div>
+      <div class="row" style="justify-content:center;margin-bottom:12px;">
+        <select id="timer-preset" onchange="timerReset()">
+          <option value="50">50分</option>
+          <option value="40">40分</option>
+          <option value="30">30分</option>
+          <option value="25" selected>25分</option>
+          <option value="20">20分</option>
+        </select>
+        <input type="number" id="timer-custom" placeholder="カスタム(分)" min="1" max="180" style="width:130px;" onchange="timerReset()">
+      </div>
+      <div class="timer-display" id="timer-display">25:00</div>
+      <div class="timer-controls">
+        <button class="btn btn-primary" onclick="timerStart()">スタート</button>
+        <button class="btn btn-ghost" onclick="timerPause()">一時停止</button>
+        <button class="btn btn-ghost" onclick="timerReset()">リセット</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let state = {
+  tournamentId: null, name: '', players: [], rounds: [],
+  currentRound: 0, totalRounds: 0, started: false,
+  viewRound: 1
+};
+let _currentPlayerUrl = '';
+
+async function copyText(value, statusId){
+  const status = document.getElementById(statusId);
+  try {
+    if(navigator.clipboard && window.isSecureContext){
+      await navigator.clipboard.writeText(value);
+    }else{
+      const ta = document.createElement('textarea');
+      ta.value = value;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    if(status){
+      status.textContent = 'コピーしました';
+      status.className = 'copy-status success';
+      setTimeout(()=>{ status.textContent=''; status.className='copy-status'; }, 1800);
+    }
+  } catch(e) {
+    if(status){
+      status.textContent = 'コピーに失敗しました';
+      status.className = 'copy-status error';
+    }
+  }
+}
+
+function switchTab(t){
+  ['setup','round','standing','timer'].forEach((name,i)=>{
+    document.querySelectorAll('.tab')[i].classList.toggle('active', name===t);
+    document.getElementById('tab-'+name).classList.toggle('active', name===t);
+  });
+  if(t==='round') renderRound();
+  if(t==='standing') renderStanding();
+}
+
+function calcRounds(n){
+  if(n<=2)return 1; if(n<=4)return 2; if(n<=8)return 3;
+  if(n<=16)return 4; if(n<=32)return 5; if(n<=64)return 6;
+  if(n<=128)return 7; return 8;
+}
+
+function addPlayer(){
+  const inp = document.getElementById('inp-player');
+  const name = inp.value.trim();
+  if(!name) return;
+  if(state.started){ alert('大会開始後は参加者を追加できません'); return; }
+  if(state.players.find(p=>p.name===name)){ alert('同じ名前のプレイヤーが既にいます'); return; }
+  state.players.push({
+    id: crypto.randomUUID(), name, dropped: false,
+    wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
+  });
+  inp.value = '';
+  renderPlayers();
+}
+
+function bulkAdd(){
+  const names = prompt('プレイヤー名を改行区切りで入力してください');
+  if(!names) return;
+  names.split('\n').forEach(n=>{
+    const name = n.trim();
+    if(!name || state.players.find(p=>p.name===name)) return;
+    state.players.push({
+      id: crypto.randomUUID(), name, dropped: false,
+      wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
+    });
+  });
+  renderPlayers();
+}
+
+function toggleDrop(id){
+  const p = state.players.find(p=>p.id===id);
+  if(p){ p.dropped = !p.dropped; renderPlayers(); }
+}
+
+function removePlayer(id){
+  if(state.started) return;
+  state.players = state.players.filter(p=>p.id!==id);
+  renderPlayers();
+}
+
+function renderPlayers(){
+  const active = state.players.filter(p=>!p.dropped);
+  const ro = document.getElementById('inp-rounds').value;
+  const rounds = ro==='auto' ? calcRounds(active.length) : parseInt(ro);
+  document.getElementById('player-count-info').textContent = state.players.length + '人登録済み';
+  document.getElementById('rounds-preview').textContent = active.length>0 ? `→ ${rounds}ラウンド予定` : '';
+  const list = document.getElementById('player-list');
+  if(state.players.length===0){
+    list.innerHTML='<div class="empty" style="padding:16px;">プレイヤーを追加してください</div>';
+    return;
+  }
+  list.innerHTML = state.players.map(p=>`
+    <div class="player-item">
+      <span style="font-weight:500">${escapeHtml(p.name)}</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span class="badge ${p.dropped?'badge-drop':'badge-active'}">${p.dropped?'DROP':'参加'}</span>
+        ${state.started
+          ? `<button class="btn btn-ghost btn-sm" onclick="toggleDrop('${p.id}')">${p.dropped?'復帰':'DROP'}</button>`
+          : `<button class="btn btn-ghost btn-sm" onclick="removePlayer('${p.id}')">削除</button>`
+        }
+      </div>
+    </div>
+  `).join('');
+}
+
+async function startTournament(){
+  const active = state.players.filter(p=>!p.dropped);
+  if(active.length<2){ alert('参加者が2人以上必要です'); return; }
+  const name = document.getElementById('inp-tournament-name').value.trim() || 'スイスドロー大会';
+  const ro = document.getElementById('inp-rounds').value;
+  const totalRounds = ro==='auto' ? calcRounds(active.length) : parseInt(ro);
+
+  try {
+    const { data: t, error: te } = await db.from('tournaments').insert({
+      name, total_rounds: totalRounds, current_round: 0, started: true
+    }).select().single();
+    if(te) throw te;
+
+    state.tournamentId = t.id;
+    state.name = name;
+    state.totalRounds = totalRounds;
+    state.started = true;
+    state.currentRound = 0;
+    state.rounds = [];
+
+    const playerRows = state.players.map(p=>({
+      tournament_id: t.id, name: p.name, dropped: p.dropped
+    }));
+    const { data: savedPlayers, error: pe } = await db.from('players').insert(playerRows).select();
+    if(pe) throw pe;
+
+    state.players = savedPlayers.map(sp=>({
+      id: sp.id, name: sp.name, dropped: sp.dropped,
+      wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
+    }));
+
+    document.getElementById('tournament-name-display').textContent = name;
+
+    state.qrOpen = true;
+    await nextRound();
+    switchTab('round');
+  } catch(e) {
+    alert('大会の開始に失敗しました: ' + e.message);
+  }
+}
+
+async function loadTournament(){
+  const id = document.getElementById('inp-load-id').value.trim();
+  if(!id){ alert('大会IDを入力してください'); return; }
+  const status = document.getElementById('load-status');
+  status.textContent = '読み込み中...';
+  try {
+    const { data: t, error: te } = await db.from('tournaments').select('*').eq('id', id).single();
+    if(te) throw te;
+    const { data: players, error: pe } = await db.from('players').select('*').eq('tournament_id', id);
+    if(pe) throw pe;
+    const { data: matches, error: me } = await db.from('matches').select('*').eq('tournament_id', id).order('round_num');
+    if(me) throw me;
+
+    state.tournamentId = t.id;
+    state.name = t.name;
+    state.totalRounds = t.total_rounds;
+    state.currentRound = t.current_round;
+    state.started = t.started;
+    state.players = players.map(p=>({
+      id: p.id, name: p.name, dropped: p.dropped,
+      wins: p.wins, losses: p.losses, draws: p.draws,
+      gameWins: p.game_wins, gameLosses: p.game_losses,
+      opponents: p.opponents || []
+    }));
+
+    const roundNums = [...new Set(matches.map(m=>m.round_num))].sort((a,b)=>a-b);
+    state.rounds = roundNums.map(rn=>{
+      const rMatches = matches.filter(m=>m.round_num===rn).map(m=>({
+        id: m.id, p1: m.p1_id, p2: m.p2_id || 'bye',
+        result: m.result, gw1: m.gw1, gw2: m.gw2, submitted: m.submitted
+      }));
+      sortMatchesForTables(rMatches, state.players);
+      return { matches: rMatches, submitted: rMatches.every(m=>m.submitted) };
+    });
+
+    document.getElementById('tournament-name-display').textContent = t.name;
+    renderPlayers();
+    status.textContent = `「${t.name}」を読み込みました`;
+    switchTab('round');
+  } catch(e) {
+    status.textContent = '読み込みに失敗しました: ' + e.message;
+  }
+}
+
+async function nextRound(){
+  const active = state.players.filter(p=>!p.dropped);
+  const matches = generateSwissPairings(active);
+
+  state.currentRound++;
+  state.viewRound = state.currentRound;
+
+  try {
+    const matchRows = matches.map(m=>({
+      tournament_id: state.tournamentId,
+      round_num: state.currentRound,
+      p1_id: m.p1,
+      p2_id: m.p2==='bye' ? null : m.p2,
+      result: m.result,
+      gw1: m.gw1, gw2: m.gw2,
+      submitted: m.result==='bye'
+    }));
+    const { data: savedMatches, error } = await db.from('matches').insert(matchRows).select();
+    if(error) throw error;
+
+    const localMatches = savedMatches.map((sm,i)=>({
+      id: sm.id,
+      p1: matches[i].p1,
+      p2: matches[i].p2,
+      result: matches[i].result,
+      gw1: matches[i].gw1,
+      gw2: matches[i].gw2,
+      submitted: matches[i].result==='bye'
+    }));
+
+    sortMatchesForTables(localMatches, state.players);
+    state.rounds.push({matches: localMatches, submitted:false});
+    await db.from('tournaments').update({current_round: state.currentRound}).eq('id', state.tournamentId);
+  } catch(e) {
+    sortMatchesForTables(matches, state.players);
+    state.rounds.push({matches, submitted:false});
+  }
+
+  renderRound();
+}
+
+function renderRound(){
+  const el = document.getElementById('round-content');
+  if(!state.started){ el.innerHTML='<div class="empty">大会を開始してください</div>'; return; }
+  if(!state.viewRound || state.viewRound > state.currentRound) state.viewRound = state.currentRound;
+  const round = state.rounds[state.viewRound-1];
+  sortMatchesForTables(round.matches, state.players);
+  const isLast = state.currentRound >= state.totalRounds;
+  const isCurrentRound = state.viewRound === state.currentRound;
+  const submitStatus = getRoundSubmitStatus(round);
+  _currentPlayerUrl = `${location.origin}${location.pathname.replace(/admin\.html$/, 'index.html')}?tid=${state.tournamentId}&round=${state.currentRound}`;
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(_currentPlayerUrl)}`;
+
+  el.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat"><div class="stat-label">大会名</div><div class="stat-value" style="font-size:14px;">${escapeHtml(state.name)}</div></div>
+      <div class="stat"><div class="stat-label">現在</div><div class="stat-value">R${state.currentRound}</div></div>
+      <div class="stat"><div class="stat-label">全体</div><div class="stat-value">${state.totalRounds}R</div></div>
+      <div class="stat"><div class="stat-label">参加者</div><div class="stat-value">${state.players.filter(p=>!p.dropped).length}人</div></div>
+    </div>
+
+    <div class="card accordion-card">
+      <button class="accordion-toggle" onclick="toggleQR(this)" aria-expanded="${state.qrOpen?'true':'false'}">
+        <span class="card-title" style="margin:0;">参加者用QRコード</span>
+        <span class="accordion-icon">${state.qrOpen?'▲':'▼'}</span>
+      </button>
+      <div class="accordion-body" style="display:${state.qrOpen?'block':'none'};">
+        <div class="qr-wrap">
+        <img src="${qrUrl}" alt="QRコード">
+        <div class="copy-panel">
+          <div class="copy-row">
+            <div>
+              <div class="copy-label">大会ID</div>
+              <div class="copy-value">${state.tournamentId}</div>
+            </div>
+            <button class="btn btn-ghost btn-sm" onclick="copyText(state.tournamentId, 'copy-id-status')">コピー</button>
+          </div>
+          <div id="copy-id-status" class="copy-status"></div>
+        </div>
+        <div class="qr-url">${_currentPlayerUrl}</div>
+        <div class="copy-actions">
+          <button class="btn btn-primary btn-sm" onclick="copyText(_currentPlayerUrl, 'copy-url-status')">参加者URLをコピー</button>
+        </div>
+        <div id="copy-url-status" class="copy-status"></div>
+        <p style="font-size:12px;color:var(--text2);margin-top:8px;">参加者はこのQRを読み取って結果を送信できます</p>
+      </div>
+    </div>
+    </div>
+
+    <div class="round-header">
+      <select class="round-select" onchange="switchViewRound(+this.value)">
+        ${Array.from({length: state.currentRound}, (_,i) => `
+          <option value="${i+1}" ${i+1===state.viewRound?'selected':''}>
+            R${i+1}${i+1<state.currentRound?' (確定済み)':''}
+          </option>
+        `).join('')}
+      </select>
+      <button class="btn btn-ghost btn-sm" onclick="refreshResults()">結果を更新</button>
+    </div>
+    ${renderRoundSubmitStatus(submitStatus)}
+    <div id="matches-list">
+      ${round.matches.map((m,i)=>renderMatch(m,i)).join('')}
+    </div>
+    <div class="btn-group">
+      ${isCurrentRound ? `<button class="btn btn-success" id="btn-submit-round" onclick="submitRound()">結果を確定する</button>` : ''}
+      ${isCurrentRound && round.submitted && !isLast ? `<button class="btn btn-primary" onclick="nextRound()">次のラウンドへ →</button>` : ''}
+      ${isCurrentRound && round.submitted && isLast ? `<button class="btn btn-warn" onclick="switchTab('standing')">最終順位を見る</button>` : ''}
+      ${!isCurrentRound ? `<div style="font-size:12px;color:var(--text2);padding:8px 0;">確定済みラウンドは編集できません</div>` : ''}
+    </div>
+  `;
+}
+
+function getRoundSubmitStatus(round){
+  const total = round.matches.length;
+  const submitted = round.matches.filter(m => m.submitted || m.result === 'bye' || m.p2 === 'bye').length;
+  const pending = round.matches
+    .map((m, i) => ({ match: m, tableNo: i + 1 }))
+    .filter(item => !(item.match.submitted || item.match.result === 'bye' || item.match.p2 === 'bye'));
+  return {
+    total,
+    submitted,
+    pending,
+    percent: total ? Math.round((submitted / total) * 100) : 0
+  };
+}
+
+function renderRoundSubmitStatus(status){
+  const pendingHtml = status.pending.length
+    ? status.pending.map(item => `<span class="pending-table-chip">第${item.tableNo}卓</span>`).join('')
+    : '<span class="all-submitted-text">全卓送信済み</span>';
+  return `
+    <div class="submit-overview">
+      <div class="submit-overview-top">
+        <div>
+          <div class="submit-overview-label">結果送信状況</div>
+          <div class="submit-overview-count">${status.submitted} / ${status.total} 卓</div>
+        </div>
+        <span class="submit-overview-percent">${status.percent}%</span>
+      </div>
+      <div class="submit-progress"><div style="width:${status.percent}%"></div></div>
+      <div class="pending-tables">
+        <span class="pending-label">未送信</span>
+        ${pendingHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderMatch(m, i){
+  const tableNo = i + 1;
+  if(m.p2==='bye'||m.result==='bye'){
+    const p = getPlayer(m.p1);
+    return `<div class="bye-card"><span class="table-no">第${tableNo}卓</span>${escapeHtml(p?p.name:'?')} — 不戦勝（BYE）</div>`;
+  }
+  const p1 = getPlayer(m.p1), p2 = getPlayer(m.p2);
+  return `
+    <div class="match-card">
+      <div class="table-no">第${tableNo}卓</div>
+      <div class="match-players">
+        <div class="match-player">${escapeHtml(p1?p1.name:'?')}</div>
+        <div class="match-vs">VS</div>
+        <div class="match-player">${escapeHtml(p2?p2.name:'?')}</div>
+      </div>
+      <div class="match-result-row">
+        <select id="res-${i}" onchange="updateResult(${i}, '${m.id}')">
+          <option value="">-- 結果 --</option>
+          <option value="p1" ${m.result==='p1'?'selected':''}>${escapeHtml(p1?p1.name:'?')} 勝利</option>
+          <option value="p2" ${m.result==='p2'?'selected':''}>${escapeHtml(p2?p2.name:'?')} 勝利</option>
+          <option value="draw" ${m.result==='draw'?'selected':''}>引き分け</option>
+        </select>
+        <span style="font-size:12px;color:var(--text2);">ゲーム数</span>
+        <input type="number" id="gw1-${i}" value="${m.gw1||0}" min="0" max="2" style="width:52px;" onchange="updateGW(${i}, '${m.id}')">
+        <span style="color:var(--text2);">-</span>
+        <input type="number" id="gw2-${i}" value="${m.gw2||0}" min="0" max="2" style="width:52px;" onchange="updateGW(${i}, '${m.id}')">
+      </div>
+      ${m.submitted ? '<div class="match-submitted">送信済み</div>' : ''}
+    </div>
+  `;
+}
+
+async function updateResult(i, matchId){
+  const round = state.rounds[state.currentRound-1];
+  const result = document.getElementById('res-'+i).value || null;
+  const gw1El = document.getElementById('gw1-'+i);
+  const gw2El = document.getElementById('gw2-'+i);
+  let gw1 = parseInt(gw1El.value, 10) || 0;
+  let gw2 = parseInt(gw2El.value, 10) || 0;
+  ({ gw1, gw2 } = applyResultAutoGame(result, gw1, gw2));
+  gw1El.value = gw1;
+  gw2El.value = gw2;
+  round.matches[i].result = result;
+  round.matches[i].gw1 = gw1;
+  round.matches[i].gw2 = gw2;
+  if(matchId && !matchId.startsWith('undefined')){
+    await db.from('matches').update({result, gw1, gw2}).eq('id', matchId);
+  }
+}
+
+async function updateGW(i, matchId){
+  const round = state.rounds[state.currentRound-1];
+  const gw1 = parseInt(document.getElementById('gw1-'+i).value)||0;
+  const gw2 = parseInt(document.getElementById('gw2-'+i).value)||0;
+  round.matches[i].gw1 = gw1;
+  round.matches[i].gw2 = gw2;
+  if(matchId && !matchId.startsWith('undefined')){
+    await db.from('matches').update({gw1, gw2}).eq('id', matchId);
+  }
+}
+
+async function refreshResults(){
+  if(!state.tournamentId) return;
+  try {
+    const { data: matches, error } = await db.from('matches')
+      .select('*')
+      .eq('tournament_id', state.tournamentId)
+      .eq('round_num', state.currentRound);
+    if(error) throw error;
+
+    const round = state.rounds[state.currentRound-1];
+    matches.forEach(m=>{
+      const local = round.matches.find(lm=>lm.id===m.id);
+      if(local){
+        local.result = m.result;
+        local.gw1 = m.gw1;
+        local.gw2 = m.gw2;
+        local.submitted = m.submitted;
+      }
+    });
+    renderRound();
+  } catch(e) {
+    console.error('結果の取得に失敗:', e);
+  }
+}
+
+async function submitRound(){
+  const btn = document.getElementById('btn-submit-round');
+  if(btn) { btn.disabled = true; btn.textContent = '確定中...'; }
+
+  const round = state.rounds[state.currentRound-1];
+  const unfinished = round.matches.filter(m=>(!m.result||m.result==='')&&m.p2!=='bye');
+  if(unfinished.length>0){
+    if(!confirm(`${unfinished.length}試合の結果が未入力です。このまま確定しますか？`)){
+      if(btn) { btn.disabled = false; btn.textContent = '結果を確定する'; }
+      return;
+    }
+  }
+
+  round.matches.forEach(m=>{
+    if(m.p2==='bye'||m.result==='bye'){
+      const p = getPlayer(m.p1);
+      if(p){ p.wins++; p.gameWins+=2; p.opponents.push('BYE'); }
+      return;
+    }
+    const p1=getPlayer(m.p1), p2=getPlayer(m.p2);
+    if(!p1||!p2) return;
+    p1.opponents.push(m.p2); p2.opponents.push(m.p1);
+    p1.gameWins+=m.gw1; p1.gameLosses+=m.gw2;
+    p2.gameWins+=m.gw2; p2.gameLosses+=m.gw1;
+    if(m.result==='p1'){ p1.wins++; p2.losses++; }
+    else if(m.result==='p2'){ p2.wins++; p1.losses++; }
+    else if(m.result==='draw'){ p1.draws++; p2.draws++; }
+  });
+
+  round.submitted = true;
+
+  try {
+    for(const p of state.players){
+      await db.from('players').update({
+        wins: p.wins, losses: p.losses, draws: p.draws,
+        game_wins: p.gameWins, game_losses: p.gameLosses,
+        opponents: p.opponents, dropped: p.dropped
+      }).eq('id', p.id);
+    }
+    for(const m of round.matches){
+      if(m.id) await db.from('matches').update({submitted:true}).eq('id', m.id);
+    }
+  } catch(e) {
+    console.error('DB更新エラー:', e);
+  }
+
+  renderRound(); renderStanding();
+}
+
+function getPlayer(id){ return state.players.find(p=>p.id===id); }
+
+function shuffleArr(arr){
+  const a = [...arr];
+  for(let i=a.length-1; i>0; i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [a[i],a[j]] = [a[j],a[i]];
+  }
+  return a;
+}
+
+function pairGroupWithBacktrack(list, maxOps=20000){
+  let ops = 0;
+  function helper(remaining){
+    ops++;
+    if(ops > maxOps) throw new Error('PAIRING_TIMEOUT');
+    if(remaining.length <= 1) return { pairs: [], leftover: remaining };
+    const [first, ...rest] = remaining;
+    for(let i=0; i<rest.length; i++){
+      if(first.opponents.includes(rest[i].id)) continue;
+      const next = rest.filter((_,idx)=>idx!==i);
+      const sub = helper(next);
+      if(sub.leftover.length <= 1){
+        return { pairs: [[first, rest[i]], ...sub.pairs], leftover: sub.leftover };
+      }
+    }
+    const sub = helper(rest);
+    return { pairs: sub.pairs, leftover: [first, ...sub.leftover] };
+  }
+  try {
+    return helper(list);
+  } catch(e){
+    return greedyFallback(list);
+  }
+}
+
+function greedyFallback(list){
+  const used = new Set(); const pairs = []; const remaining = [...list];
+  for(let i=0; i<remaining.length; i++){
+    if(used.has(remaining[i].id)) continue;
+    let matched = false;
+    for(let j=i+1; j<remaining.length; j++){
+      if(used.has(remaining[j].id)) continue;
+      if(remaining[i].opponents.includes(remaining[j].id)) continue;
+      pairs.push([remaining[i], remaining[j]]);
+      used.add(remaining[i].id); used.add(remaining[j].id);
+      matched = true; break;
+    }
+    if(!matched){
+      for(let j=i+1; j<remaining.length; j++){
+        if(used.has(remaining[j].id)) continue;
+        pairs.push([remaining[i], remaining[j]]);
+        used.add(remaining[i].id); used.add(remaining[j].id);
+        matched = true; break;
+      }
+    }
+  }
+  const leftover = remaining.filter(p=>!used.has(p.id));
+  return { pairs, leftover };
+}
+
+function swapByeIfPossible(byePlayer, pairs){
+  for(let i=0; i<pairs.length; i++){
+    const [a, b] = pairs[i];
+    const aEligible = !(a.opponents||[]).includes('BYE') && !(byePlayer.opponents||[]).includes(b.id);
+    const bEligible = !(b.opponents||[]).includes('BYE') && !(byePlayer.opponents||[]).includes(a.id);
+    if(aEligible){ pairs[i] = [byePlayer, b]; return a; }
+    if(bEligible){ pairs[i] = [a, byePlayer]; return b; }
+  }
+  return null;
+}
+
+function generateSwissPairings(active){
+  const byPoints = new Map();
+  for(const p of active){
+    const key = getPoints(p);
+    if(!byPoints.has(key)) byPoints.set(key, []);
+    byPoints.get(key).push(p);
+  }
+  const keys = [...byPoints.keys()].sort((a,b)=>b-a);
+
+  let floatDown = [];
+  const allPairs = [];
+  for(const key of keys){
+    const group = shuffleArr([...floatDown, ...byPoints.get(key)]);
+    const { pairs, leftover } = pairGroupWithBacktrack(group);
+    allPairs.push(...pairs);
+    floatDown = leftover;
+  }
+
+  let byePlayer = null;
+  if(floatDown.length === 1){
+    byePlayer = floatDown[0];
+  } else if(floatDown.length > 1){
+    const forced = greedyFallback(floatDown);
+    allPairs.push(...forced.pairs);
+    byePlayer = forced.leftover[0] || null;
+    console.warn(`スイスペアリング: ${floatDown.length}人の衝突により再戦が発生した可能性があります`, floatDown.map(p=>p.name));
+  }
+
+  if(byePlayer && (byePlayer.opponents||[]).includes('BYE')){
+    const newBye = swapByeIfPossible(byePlayer, allPairs);
+    if(newBye) byePlayer = newBye;
+  }
+
+  const matches = allPairs.map(([a,b]) => ({ p1:a.id, p2:b.id, result:null, gw1:0, gw2:0 }));
+  if(byePlayer){
+    console.warn(`スイスペアリング: BYEが割り当てられました`, byePlayer.name);
+    matches.push({ p1: byePlayer.id, p2:'bye', result:'bye', gw1:2, gw2:0 });
+  }
+  return matches;
+}
+
+function calcOMW(p){
+  if(p.opponents.length===0) return 1/3;
+  const rates = p.opponents.map(oid=>{
+    const op = getPlayer(oid);
+    return op ? calcMatchWinPct(op) : 1/3;
+  });
+  return rates.reduce((s,r)=>s+r,0)/rates.length;
+}
+function calcGW(p){
+  const total = p.gameWins+p.gameLosses;
+  return total===0 ? 1/3 : Math.max(p.gameWins/total, 1/3);
+}
+function calcOGW(p){
+  if(p.opponents.length===0) return 1/3;
+  const rates = p.opponents.map(oid=>{ const op=getPlayer(oid); return op?calcGW(op):1/3; });
+  return rates.reduce((s,r)=>s+r,0)/rates.length;
+}
+function getSortedPlayers(){
+  return [...state.players].sort((a,b)=>{
+    const pd = getPoints(b)-getPoints(a);
+    if(pd!==0) return pd;
+    const omw = calcOMW(b)-calcOMW(a);
+    if(Math.abs(omw)>0.0001) return omw;
+    const gw = calcGW(b)-calcGW(a);
+    if(Math.abs(gw)>0.0001) return gw;
+    return calcOGW(b)-calcOGW(a);
+  });
+}
+
+function renderStanding(){
+  const el = document.getElementById('standing-content');
+  if(!state.started){ el.innerHTML='<div class="empty">大会を開始してください</div>'; return; }
+  const players = getSortedPlayers();
+  el.innerHTML = `
+    <table>
+      <thead>
+        <tr><th>順位</th><th>名前</th><th>勝点</th><th>W-L-D</th><th>OMW%</th><th>GW%</th><th>OGW%</th><th>状態</th></tr>
+      </thead>
+      <tbody>
+        ${players.map((p,i)=>`
+          <tr class="${i===0?'rank-gold':i===1?'rank-silver':i===2?'rank-bronze':''}">
+            <td>${i+1}</td><td>${escapeHtml(p.name)}</td><td>${getPoints(p)}</td>
+            <td>${p.wins}-${p.losses}-${p.draws}</td>
+            <td>${(calcOMW(p)*100).toFixed(1)}%</td>
+            <td>${(calcGW(p)*100).toFixed(1)}%</td>
+            <td>${(calcOGW(p)*100).toFixed(1)}%</td>
+            <td><span class="badge ${p.dropped?'badge-drop':'badge-active'}">${p.dropped?'DROP':'参加'}</span></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function exportCSV(){
+  const players = getSortedPlayers();
+  const headers = ['順位','名前','勝点','勝','負','分','OMW%','GW%','OGW%','状態'];
+  const rows = players.map((p,i)=>[
+    i+1, p.name, getPoints(p), p.wins, p.losses, p.draws,
+    (calcOMW(p)*100).toFixed(1), (calcGW(p)*100).toFixed(1), (calcOGW(p)*100).toFixed(1),
+    p.dropped?'DROP':'参加'
+  ]);
+  const csv = [headers,...rows].map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob(['\uFEFF'+csv],{type:'text/csv;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${state.name||'swissdraw'}_standings.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function resetAll(){
+  if(!confirm('大会データをすべてリセットしますか？')) return;
+  state = {tournamentId:null, name:'', players:[], rounds:[], currentRound:0, totalRounds:0, started:false, viewRound:1, qrOpen:false};
+  renderPlayers(); renderRound(); renderStanding();
+  document.getElementById('inp-tournament-name').value='';
+  document.getElementById('tournament-name-display').textContent='';
+}
+
+let timerSec=25*60, timerRunning=false, timerInterval=null;
+
+const _ac = new (window.AudioContext || window.webkitAudioContext)();
+function playTimeupSound(){
+  if(_ac.state==='suspended') _ac.resume();
+  [{freq:880,start:0.0,dur:0.5},{freq:660,start:0.5,dur:0.5},{freq:440,start:1.0,dur:1.2}]
+  .forEach(({freq,start,dur})=>{
+    const o=_ac.createOscillator(), g=_ac.createGain();
+    o.connect(g); g.connect(_ac.destination);
+    o.type='sine';
+    o.frequency.setValueAtTime(freq, _ac.currentTime+start);
+    g.gain.setValueAtTime(0.5, _ac.currentTime+start);
+    g.gain.exponentialRampToValueAtTime(0.001, _ac.currentTime+start+dur);
+    o.start(_ac.currentTime+start);
+    o.stop(_ac.currentTime+start+dur);
+  });
+}
+
+function timerStart(){
+  if(timerRunning) return;
+  _ac.resume();
+  timerRunning=true;
+  timerInterval=setInterval(()=>{ timerSec--; updateTimerDisplay(); if(timerSec<=0){clearInterval(timerInterval);timerRunning=false;playTimeupSound();} },1000);
+}
+function timerPause(){ clearInterval(timerInterval); timerRunning=false; }
+function timerReset(){
+  clearInterval(timerInterval); timerRunning=false;
+  const custom=parseInt(document.getElementById('timer-custom').value);
+  const preset=parseInt(document.getElementById('timer-preset').value);
+  timerSec=(custom>0?custom:preset)*60;
+  updateTimerDisplay();
+}
+function updateTimerDisplay(){
+  const m=Math.floor(timerSec/60), s=timerSec%60;
+  const el=document.getElementById('timer-display');
+  el.textContent=`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  el.className='timer-display'+(timerSec<=60?' danger':timerSec<=300?' warn':'');
+}
+
+function toggleQR(btn){
+  state.qrOpen = !state.qrOpen;
+  const body = btn.nextElementSibling;
+  body.style.display = state.qrOpen ? 'block' : 'none';
+  btn.setAttribute('aria-expanded', String(state.qrOpen));
+  btn.querySelector('.accordion-icon').textContent = state.qrOpen ? '▲' : '▼';
+}
+
+function switchViewRound(n){
+  state.viewRound = n;
+  renderRound();
+}
+
+checkConnection();
+renderPlayers();
+updateTimerDisplay();
+</script>
+</body>
+</html>
