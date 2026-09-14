@@ -414,7 +414,7 @@ function renderRound(){
       ${round.matches.map((m,i)=>renderMatch(m,i)).join('')}
     </div>
     <div class="btn-group">
-      ${isCurrentRound ? `<button class="btn btn-success" id="btn-submit-round" onclick="submitRound()">結果を確定する</button>` : ''}
+      ${isCurrentRound && !round.submitted ? `<button class="btn btn-success" id="btn-submit-round" onclick="submitRound()">結果を確定する</button>` : ''}
       ${isCurrentRound && round.submitted && !isLast ? `<button class="btn btn-primary" onclick="nextRound()">次のラウンドへ →</button>` : ''}
       ${isCurrentRound && round.submitted && isLast ? `<button class="btn btn-warn" onclick="switchTab('standing')">最終順位を見る</button>` : ''}
       ${!isCurrentRound ? `<div style="font-size:12px;color:var(--text2);padding:8px 0;">確定済みラウンドは編集できません</div>` : ''}

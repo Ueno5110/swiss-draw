@@ -48,12 +48,16 @@ function sortMatchesForTables(matches, players){
   const playerMap = new Map(players.map(p => [p.id, p]));
   const p1Id = m => m.p1 || m.p1_id;
   const p2Id = m => m.p2 || m.p2_id;
+  const isBye = m => p2Id(m) === 'bye' || m.result === 'bye';
   const score = id => {
     const p = playerMap.get(id);
     return p ? getPoints(p) : 0;
   };
   const name = id => playerMap.get(id)?.name || '';
   return matches.sort((a,b)=>{
+    const aBye = isBye(a), bBye = isBye(b);
+    if(aBye !== bBye) return aBye ? 1 : -1;
+    if(aBye && bBye) return 0;
     const ap = Math.max(score(p1Id(a)), score(p2Id(a)));
     const bp = Math.max(score(p1Id(b)), score(p2Id(b)));
     if(bp !== ap) return bp - ap;
