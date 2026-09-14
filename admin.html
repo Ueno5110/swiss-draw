@@ -113,7 +113,7 @@
 let state = {
   tournamentId: null, name: '', players: [], rounds: [],
   currentRound: 0, totalRounds: 0, started: false,
-  viewRound: 1
+  viewRound: 1, tieResoulution: {}
 };
 let _currentPlayerUrl = '';
 
@@ -244,6 +244,7 @@ async function startTournament(){
     state.started = true;
     state.currentRound = 0;
     state.rounds = [];
+    state.tieResoulution = {};
 
     const playerRows = state.players.map(p=>({
       tournament_id: t.id, name: p.name, dropped: p.dropped
@@ -284,6 +285,7 @@ async function loadTournament(){
     state.totalRounds = t.total_rounds;
     state.currentRound = t.current_round;
     state.started = t.started;
+    state.tieResoulution = t.tie_resolution || {};
     state.players = players.map(p=>({
       id: p.id, name: p.name, dropped: p.dropped,
       wins: p.wins, losses: p.losses, draws: p.draws,
@@ -731,33 +733,58 @@ function getSortedPlayers(){
     if(Math.abs(omw)>0.0001) return omw;
     const gw = calcGW(b)-calcGW(a);
     if(Math.abs(gw)>0.0001) return gw;
-    return calcOGW(b)-calcOGW(a);
+    const ogw = calcOGW(b)-calcOGW(a);
+    if(Math.abs(ogw)>0.0001) return ogw;
+    const h2h = headToHeadResult(a.id,b.id);
+    if(h2h==='a') return -1;
+    if(h2h==='b') return 1;
+    return 0;
   });
 }
 
 function renderStanding(){
   const el = document.getElementById('standing-content');
   if(!state.started){ el.innerHTML='<div class="empty">大会を開始してください</div>'; return; }
-  const players = getSortedPlayers();
+  const rows = computeStandingRows();
   el.innerHTML = `
     <table>
       <thead>
         <tr><th>順位</th><th>名前</th><th>勝点</th><th>W-L-D</th><th>OMW%</th><th>GW%</th><th>OGW%</th><th>状態</th></tr>
       </thead>
       <tbody>
-        ${players.map((p,i)=>`
-          <tr class="${i===0?'rank-gold':i===1?'rank-silver':i===2?'rank-bronze':''}">
-            <td>${i+1}</td><td>${escapeHtml(p.name)}</td><td>${getPoints(p)}</td>
+       ${rows.map(row=>{
+          const p = row.player;
+          const rankCls = row.rank===1?'rank-gold':row.rank===2?'rank-silver':row.rank===3?'rank-bronze':'';
+          return `
+          <tr class="${rankCls}">
+            <td>${row.rank}${row.tied?' <span class="tie-badge">同着</span>':''}</td>
+            <td>${escapeHtml(p.name)}</td><td>${getPoints(p)}</td>
             <td>${p.wins}-${p.losses}-${p.draws}</td>
             <td>${(calcOMW(p)*100).toFixed(1)}%</td>
             <td>${(calcGW(p)*100).toFixed(1)}%</td>
             <td>${(calcOGW(p)*100).toFixed(1)}%</td>
             <td><span class="badge ${p.dropped?'badge-drop':'badge-active'}">${p.dropped?'DROP':'参加'}</span></td>
-          </tr>
-        `).join('')}
+         </tr>
+        `;}).join('')}
       </tbody>
     </table>
+    <div id="tie-lottery-area">${renderTieLotteryButtons(rows)}</div>
   `;
+}
+
+function renderTieLotteryButtons(rows){
+  const seen = new Set();
+  const groups = rows.filter(r=>r.tied && !seen.has(r.groupKey) && seen.add(r.groupKey));
+  if(groups.length===0) return '';
+  return groups.map(g=>{
+    const names = rows.filter(r=>r.groupKey===g.groupKey).map(r=>escapeHtml(r.player.name)).join('・');
+    return `
+      <div class="tie-lottery-card">
+        <div class="tie-lottery-label">${g.rank}位 同着（${names}）</div>
+        <button class="btn btn-warn btn-sm" onclick="runLottery('${g.groupKey}', ${JSON.stringify(g.groupKey.split(','))})">抽選する</button>
+      </div>
+    `;
+  }).join('');
 }
 
 function exportCSV(){
@@ -779,7 +806,7 @@ function exportCSV(){
 
 function resetAll(){
   if(!confirm('大会データをすべてリセットしますか？')) return;
-  state = {tournamentId:null, name:'', players:[], rounds:[], currentRound:0, totalRounds:0, started:false, viewRound:1, qrOpen:false};
+  state = {tournamentId:null, name:'', players:[], rounds:[], currentRound:0, totalRounds:0, started:false, viewRound:1, qrOpen:false, tieResolutions:{}};
   renderPlayers(); renderRound(); renderStanding();
   document.getElementById('inp-tournament-name').value='';
   document.getElementById('tournament-name-display').textContent='';
@@ -835,6 +862,112 @@ function toggleQR(btn){
 function switchViewRound(n){
   state.viewRound = n;
   renderRound();
+}
+
+// state.rounds の全対戦を走査し、a・bが直接対戦した場合の勝者を返す。
+// 'a' = aの勝ち, 'b' = bの勝ち, null = 未対戦・引き分け・未確定
+function headToHeadResult(aId, bId){
+  for(const round of state.rounds){
+    for(const m of round.matches){
+      if((m.p1===aId && m.p2===bId) || (m.p1===bId && m.p2===aId)){
+        if(m.result==='p1') return m.p1===aId ? 'a' : 'b';
+        if(m.result==='p2') return m.p2===aId ? 'a' : 'b';
+        return null; // 引き分け or 未確定
+      }
+    }
+  }
+  return null; // 未対戦
+}
+
+function groupKey(players){ return players.map(p=>p.id).sort().join(','); }
+
+function buildStandingGroups(sorted){
+  const groups = [];
+  let current = [sorted[0]];
+  for(let i=1;i<sorted.length;i++){
+    const prev = sorted[i-1], cur = sorted[i];
+    const tied = getPoints(prev)===getPoints(cur)
+      && Math.abs(calcOMW(prev)-calcOMW(cur))<0.0001
+      && Math.abs(calcGW(prev)-calcGW(cur))<0.0001
+      && Math.abs(calcOGW(prev)-calcOGW(cur))<0.0001
+      && headToHeadResult(prev.id, cur.id)===null;
+    if(tied) current.push(cur);
+    else { groups.push(current); current=[cur]; }
+  }
+  groups.push(current);
+  return groups;
+}
+
+function computeStandingRows(){
+  const sorted = getSortedPlayers();
+  const groups = buildStandingGroups(sorted);
+  const rows = [];
+  let rank = 1;
+  for(const group of groups){
+    const key = group.length>1 ? groupKey(group) : null;
+    const resolution = key ? state.tieResolutions[key] : null;
+    let ordered = group;
+    if(resolution){
+      ordered = resolution.map(id=>group.find(p=>p.id===id)).filter(Boolean);
+    }
+    ordered.forEach((p,idx)=>{
+      const displayRank = (resolution || group.length===1) ? rank+idx : rank;
+      rows.push({ player:p, rank:displayRank, tied: group.length>1 && !resolution, groupKey:key, resolved: !!resolution });
+    });
+    rank += group.length;
+  }
+  return rows;
+}
+
+async function runLottery(key, ids){
+  const group = ids.map(id=>getPlayer(id)).filter(Boolean);
+  const shuffled = shuffleArr(group);
+  await playLotteryAnimation(shuffled);
+  state.tieResolutions[key] = shuffled.map(p=>p.id);
+  try {
+    await db.from('tournaments').update({ tie_resolutions: state.tieResolutions }).eq('id', state.tournamentId);
+  } catch(e) {
+    console.error('抽選結果の保存に失敗:', e);
+  }
+  renderStanding();
+}
+
+function playLotteryAnimation(shuffledPlayers){
+  return new Promise(resolve=>{
+    const overlay = document.createElement('div');
+    overlay.className = 'lottery-overlay';
+    overlay.innerHTML = `
+      <div class="lottery-box">
+        <div class="lottery-title">抽選中...</div>
+        <div class="lottery-name" id="lottery-name-display">-</div>
+        <div class="lottery-result hidden" id="lottery-result-display"></div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const nameEl = overlay.querySelector('#lottery-name-display');
+    const resultEl = overlay.querySelector('#lottery-result-display');
+    const pool = shuffledPlayers.map(p=>p.name);
+
+    let tick = 0;
+    const totalTicks = 24;
+    const interval = setInterval(()=>{
+      nameEl.textContent = pool[Math.floor(Math.random()*pool.length)];
+      tick++;
+      if(tick >= totalTicks){
+        clearInterval(interval);
+        nameEl.textContent = '確定！';
+        resultEl.classList.remove('hidden');
+        resultEl.innerHTML = shuffledPlayers.map((p,i)=>`
+          <div class="lottery-result-row">${i+1}位相当：${escapeHtml(p.name)}</div>
+        `).join('');
+        setTimeout(()=>{
+          overlay.remove();
+          resolve();
+        }, 2200);
+      }
+    }, 90);
+  });
 }
 
 checkConnection();

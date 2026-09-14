@@ -141,3 +141,31 @@ tr:hover td{background:var(--bg3);}
   .player-summary{grid-template-columns:1fr;}
   table{display:block;overflow-x:auto;white-space:nowrap;}
 }
+
+.tie-badge{
+  display:inline-block;background:rgba(240,160,75,.18);color:var(--warn);
+  border:1px solid rgba(240,160,75,.4);border-radius:999px;
+  padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;
+}
+.tie-lottery-card{
+  display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--bg3);border:1px solid var(--border);border-radius:8px;
+  padding:10px 12px;margin-top:8px;
+}
+.tie-lottery-label{font-size:13px;color:var(--text);}
+.lottery-overlay{
+  position:fixed;inset:0;background:rgba(10,11,17,.92);
+  display:flex;align-items:center;justify-content:center;z-index:999;
+}
+.lottery-box{
+  background:var(--bg2);border:1px solid var(--border);border-radius:16px;
+  padding:32px 40px;text-align:center;min-width:280px;
+}
+.lottery-title{font-size:13px;color:var(--text2);margin-bottom:14px;letter-spacing:1px;}
+.lottery-name{
+  font-size:32px;font-weight:800;color:var(--accent);min-height:44px;
+}
+.lottery-result{margin-top:18px;text-align:left;}
+.lottery-result.hidden{display:none;}
+.lottery-result-row{font-size:14px;color:var(--text);padding:4px 0;border-top:1px solid var(--border);}
+.lottery-result-row:first-child{border-top:none;}
