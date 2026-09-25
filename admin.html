@@ -781,6 +781,7 @@ function renderStanding(){
       </tbody>
     </table>
     <div id="tie-lottery-area">${renderTieLotteryButtons(rows)}</div>
+    ${renderLateJoinRecords()}
   `;
 }
 
@@ -980,6 +981,31 @@ function playLotteryAnimation(shuffledPlayers){
       }
     }, 90);
   });
+}
+
+function renderLateJoinRecords(){
+  const lateJoiners = state.players.filter(p => p.lateJoin);
+  if(lateJoiners.length===0) return '';
+  return `
+    <div class="card" style="margin-top:12px;">
+      <div class="card-title">途中参加者の記録（参考・順位対象外）</div>
+      <table>
+        <thead>
+          <tr><th>名前</th><th>勝点</th><th>W-L-D</th><th>状態</th></tr>
+        </thead>
+        <tbody>
+          ${lateJoiners.map(p=>`
+            <tr>
+              <td>${escapeHtml(p.name)}</td>
+              <td>${getPoints(p)}</td>
+              <td>${p.wins}-${p.losses}-${p.draws}</td>
+              <td><span class="badge ${p.dropped?'badge-drop':'badge-active'}">${p.dropped?'DROP':'参加'}</span></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 checkConnection();
