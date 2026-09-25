@@ -169,3 +169,8 @@ tr:hover td{background:var(--bg3);}
 .lottery-result.hidden{display:none;}
 .lottery-result-row{font-size:14px;color:var(--text);padding:4px 0;border-top:1px solid var(--border);}
 .lottery-result-row:first-child{border-top:none;}
+.late-join-badge{
+  display:inline-block;background:rgba(108,99,255,.16);color:var(--accent);
+  border:1px solid rgba(108,99,255,.35);border-radius:999px;
+  padding:1px 7px;font-size:10px;font-weight:700;margin-left:6px;
+}

@@ -113,7 +113,7 @@
 let state = {
   tournamentId: null, name: '', players: [], rounds: [],
   currentRound: 0, totalRounds: 0, started: false,
-  viewRound: 1, tieResoulution: {}
+  viewRound: 1, tieResolutions: {}
 };
 let _currentPlayerUrl = '';
 
@@ -165,12 +165,23 @@ function addPlayer(){
   const inp = document.getElementById('inp-player');
   const name = inp.value.trim();
   if(!name) return;
-  if(state.started){ alert('大会開始後は参加者を追加できません'); return; }
   if(state.players.find(p=>p.name===name)){ alert('同じ名前のプレイヤーが既にいます'); return; }
+  const lateJoin = state.started && state.currentRound >= 1;
   state.players.push({
     id: crypto.randomUUID(), name, dropped: false,
-    wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[]
+    wins:0, losses:0, draws:0, gameWins:0, gameLosses:0, opponents:[],
+    lateJoin
   });
+  if(lateJoin){
+    db.from('players').insert({
+      tournament_id: state.tournamentId, name, dropped: false, late_join: true
+    }).select().single().then(({data, error})=>{
+      if(error){ console.error('途中参加選手の登録に失敗:', error); return; }
+      const target = state.players[state.players.length-1];
+      target.id = data.id;
+      renderPlayers();
+    });
+  }
   inp.value = '';
   renderPlayers();
 }
@@ -213,7 +224,7 @@ function renderPlayers(){
   }
   list.innerHTML = state.players.map(p=>`
     <div class="player-item">
-      <span style="font-weight:500">${escapeHtml(p.name)}</span>
+      <span style="font-weight:500">${escapeHtml(p.name)}</span>${p.lateJoin?' <span class="late-join-badge">途中参加</span>':''}
       <div style="display:flex;align-items:center;gap:8px;">
         <span class="badge ${p.dropped?'badge-drop':'badge-active'}">${p.dropped?'DROP':'参加'}</span>
         ${state.started
@@ -244,7 +255,7 @@ async function startTournament(){
     state.started = true;
     state.currentRound = 0;
     state.rounds = [];
-    state.tieResoulution = {};
+    state.tieResolutions = {};
 
     const playerRows = state.players.map(p=>({
       tournament_id: t.id, name: p.name, dropped: p.dropped
@@ -285,12 +296,13 @@ async function loadTournament(){
     state.totalRounds = t.total_rounds;
     state.currentRound = t.current_round;
     state.started = t.started;
-    state.tieResoulution = t.tie_resolution || {};
+    state.tieResolutions = t.tie_resolutions || {};
     state.players = players.map(p=>({
       id: p.id, name: p.name, dropped: p.dropped,
       wins: p.wins, losses: p.losses, draws: p.draws,
       gameWins: p.game_wins, gameLosses: p.game_losses,
-      opponents: p.opponents || []
+      opponents: p.opponents || [],
+      lateJoin: p.late_join || false
     }));
 
     const roundNums = [...new Set(matches.map(m=>m.round_num))].sort((a,b)=>a-b);
@@ -788,7 +800,7 @@ function renderTieLotteryButtons(rows){
 }
 
 function exportCSV(){
-  const players = getSortedPlayers();
+  const players = getSortedPlayers().filter(p => !p.lateJoin);
   const headers = ['順位','名前','勝点','勝','負','分','OMW%','GW%','OGW%','状態'];
   const rows = players.map((p,i)=>[
     i+1, p.name, getPoints(p), p.wins, p.losses, p.draws,
@@ -899,7 +911,7 @@ function buildStandingGroups(sorted){
 }
 
 function computeStandingRows(){
-  const sorted = getSortedPlayers();
+  const sorted = getSortedPlayers().filter(p => !p.lateJoin);
   const groups = buildStandingGroups(sorted);
   const rows = [];
   let rank = 1;
